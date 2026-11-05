@@ -1,0 +1,235 @@
+@import "./fonts/fonts.css";
+
+/*
+ * The Dyna light palette, as in the Dyna Zed theme (~/.config/zed/themes/dyna.ts) and its Emacs port
+ * flux-light. Only the roles below use these names directly; everything else uses the roles.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Neutrals, lightest to darkest */
+  --paper: #fff5ed;
+  --parchment: #fff1e0;
+  --dust: #f0e6d3;
+  --bark: #d6cab4;
+  --mud: #9c7f5f;
+  --sand: #91846e;
+  --dusk: #5a5040;
+  --ink: #3c3836;
+
+  /* Accents */
+  --green: #365e36;
+  --blue: #3e4c75;
+  --amber: #8a6020;
+  --red: #8f2525;
+  --plum: #644185;
+  --cyan: #4a8f8f;
+
+  /* Accent backgrounds */
+  --green-bg: #f4fff0;
+  --blue-bg: #dfdfed;
+  --amber-bg: #ffe9cc;
+  --red-bg: #fce0de;
+}
+
+/* Roles, following where Zed and Emacs use each colour. */
+:root {
+  --bg: var(--paper);
+  --surface: var(--parchment);
+  --hover: color-mix(in srgb, var(--dust) 60%, transparent);
+  --selected: var(--dust);
+  --border: var(--bark);
+  --border-active: var(--mud);
+  --shadow: color-mix(in srgb, var(--ink) 8%, transparent);
+
+  --text: var(--ink);
+  --text-muted: var(--dusk);
+  --text-faint: var(--sand);
+  --line-number: var(--bark);
+  --code-bg: var(--parchment);
+  --inline-code-bg: var(--dust);
+  --code-border: var(--bark);
+  --list-marker: var(--dusk);
+  --icon: var(--dusk);
+
+  --accent: var(--blue);
+  --on-accent: var(--paper);
+  --error: var(--red);
+  --selection: var(--blue-bg);
+  --toggle-on: var(--blue-bg);
+
+  /* Commented text: amber, brightened. Translucent, so overlapping threads read darker. */
+  --highlight: oklch(from var(--amber) 0.86 0.15 h / 0.5);
+  --highlight-active: oklch(from var(--amber) 0.8 0.17 h / 0.75);
+  --highlight-resolved: color-mix(in srgb, var(--sand) 15%, transparent);
+  --draft: color-mix(in srgb, var(--blue) 22%, transparent);
+
+  --font-sans: "Libron", system-ui, sans-serif;
+  --font-mono: "Monaspace Xenon", ui-monospace, Menlo, monospace;
+
+  /* Syntax: mostly monochrome, told apart by weight and slant. */
+  --syntax-comment: var(--sand);
+  --syntax-type: var(--green);
+  --syntax-constructor: var(--blue);
+  --syntax-constant: var(--amber);
+  --syntax-string: var(--blue);
+  --syntax-escape: var(--plum);
+  --syntax-number: var(--blue);
+  --syntax-link: var(--blue);
+  --syntax-inserted: var(--green);
+  --syntax-deleted: var(--red);
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Crepe (Milkdown) reads its own variables. */
+.milkdown {
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: var(--surface);
+  --crepe-color-surface-low: var(--dust);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-muted);
+  --crepe-color-outline: var(--border);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--selected);
+  --crepe-color-on-secondary: var(--text);
+  --crepe-color-inverse: var(--text);
+  --crepe-color-on-inverse: var(--bg);
+  --crepe-color-inline-code: var(--text);
+  --crepe-color-inline-area: var(--hover);
+  --crepe-color-error: var(--error);
+  --crepe-color-hover: var(--hover);
+  --crepe-color-selected: var(--selection);
+  --crepe-font-default: var(--font-sans);
+  --crepe-font-title: var(--font-sans);
+  --crepe-font-code: var(--font-mono);
+  --crepe-shadow-1: 0 1px 3px var(--shadow);
+  --crepe-shadow-2: 0 4px 12px var(--shadow);
+}
+
+/*
+ * Syntax classes: `syn-*` from CodeMirror (see syntax.ts), `hljs-*` from highlight.js in markdown
+ * code blocks.
+ */
+.syn-comment,
+.hljs-comment,
+.hljs-quote {
+  color: var(--syntax-comment);
+  font-style: oblique;
+}
+
+.syn-keyword,
+.hljs-keyword,
+.hljs-selector-tag,
+.syn-heading,
+.hljs-section,
+.syn-strong,
+.hljs-strong {
+  font-weight: 700;
+}
+
+.syn-import {
+  font-style: italic;
+  font-weight: 100;
+}
+
+.syn-operator,
+.hljs-operator {
+  font-weight: 500;
+}
+
+.syn-type,
+.hljs-type,
+.hljs-title.class_ {
+  color: var(--syntax-type);
+}
+
+.syn-constructor {
+  color: var(--syntax-constructor);
+  font-weight: 600;
+}
+
+.syn-function,
+.hljs-title.function_,
+.syn-tag,
+.hljs-tag .hljs-name {
+  font-weight: 600;
+}
+
+.syn-builtin,
+.hljs-built_in,
+.hljs-variable.language_ {
+  font-style: italic;
+  font-weight: 600;
+}
+
+.syn-property,
+.hljs-property,
+.hljs-attr,
+.hljs-params {
+  font-style: italic;
+}
+
+.syn-constant,
+.hljs-variable.constant_,
+.hljs-symbol {
+  color: var(--syntax-constant);
+  font-weight: 600;
+}
+
+.syn-string,
+.hljs-string,
+.hljs-regexp {
+  color: var(--syntax-string);
+}
+
+.syn-escape,
+.hljs-char.escape_,
+.hljs-subst {
+  color: var(--syntax-escape);
+  font-weight: 700;
+}
+
+.syn-number,
+.hljs-number {
+  color: var(--syntax-number);
+  font-weight: 600;
+}
+
+.syn-boolean,
+.hljs-literal {
+  color: var(--syntax-number);
+  font-style: italic;
+  font-weight: 600;
+}
+
+.syn-meta,
+.hljs-meta {
+  font-style: italic;
+  font-weight: 200;
+}
+
+.syn-link,
+.hljs-link {
+  color: var(--syntax-link);
+}
+
+.syn-emphasis,
+.hljs-emphasis {
+  font-style: oblique;
+}
+
+.syn-inserted,
+.hljs-addition {
+  color: var(--syntax-inserted);
+}
+
+.syn-deleted,
+.syn-invalid,
+.hljs-deletion {
+  color: var(--syntax-deleted);
+}

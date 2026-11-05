@@ -1,0 +1,248 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { mergeComment, Workspace, type StoredComment } from "./workspace.ts";
+
+const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" });
+
+/** A repository with `a.md`, optionally committed and pushed to a remote. */
+async function workspace(text: string, { pushed = false } = {}) {
+  const root = await mkdtemp(join(tmpdir(), "workspace-"));
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.name", "Ada");
+  git(root, "config", "user.email", "ada@example.com");
+  await writeFile(join(root, "a.md"), text);
+  if (pushed) {
+    const remote = await mkdtemp(join(tmpdir(), "remote-"));
+    git(remote, "init", "-q", "--bare");
+    git(root, "remote", "add", "origin", remote);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "a");
+    git(root, "push", "-q", "origin", "main");
+  }
+  return Workspace.open(root);
+}
+
+const edit = (ws: Workspace, text: string) => writeFile(join(ws.root, "a.md"), text);
+const commentFiles = (ws: Workspace) => readdir(join(ws.root, ".comments", "a.md")).catch(() => []);
+const placed = async (ws: Workspace) => {
+  const { text, threads } = await ws.view("a.md");
+  return threads.map((t) => t.span && text.slice(t.span.from, t.span.to));
+};
+
+test("a new thread is placed on the text it was made on", async () => {
+  const ws = await workspace("Some text to comment on.\n");
+  await ws.add("a.md", { text: "first", span: { from: 5, to: 9 } });
+  const [thread] = (await ws.view("a.md")).threads;
+  assert.deepEqual([thread.span, thread.quote, thread.comments[0].author], [{ from: 5, to: 9 }, "text", "Ada"]);
+});
+
+test("a pushed anchor stays put, and is mapped through later edits", async () => {
+  const ws = await workspace("foo bar\nfoo bar\n", { pushed: true });
+  await ws.add("a.md", { text: "the second one", span: { from: 8, to: 11 } });
+  const [file] = await commentFiles(ws);
+  const stored = await readFile(join(ws.root, ".comments", "a.md", file), "utf8");
+  await edit(ws, "intro\nfoo bar\nfoo baz\n");
+  const { text, threads } = await ws.view("a.md");
+  assert.deepEqual(threads[0].span, { from: 14, to: 17 });
+  assert.equal(text.slice(14, 17), "foo");
+  assert.equal(await readFile(join(ws.root, ".comments", "a.md", file), "utf8"), stored);
+});
+
+test("an anchor that isn't pushed follows edits to the text", async () => {
+  const ws = await workspace("one two three\n");
+  await ws.add("a.md", { text: "c", span: { from: 4, to: 13 } });
+  await edit(ws, "zero one two, three\n");
+  const [thread] = (await ws.view("a.md")).threads;
+  assert.equal(thread.quote, "two, three");
+  const [file] = await commentFiles(ws);
+  const { anchor } = JSON.parse(await readFile(join(ws.root, ".comments", "a.md", file), "utf8"));
+  assert.deepEqual([anchor.from, anchor.to], [9, 19]);
+});
+
+test("a thread whose base text is unknown is shown unplaced, with its quote", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "c", span: { from: 0, to: 4 } });
+  const [file] = await commentFiles(ws);
+  const path = join(ws.root, ".comments", "a.md", file);
+  const comment = JSON.parse(await readFile(path, "utf8"));
+  comment.anchor.base = "0".repeat(40);
+  await writeFile(path, JSON.stringify(comment));
+  const [thread] = (await ws.view("a.md")).threads;
+  assert.deepEqual([thread.span, thread.quote], [null, "text"]);
+});
+
+test("deleting a thread's first comment deletes its replies", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 4 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  await ws.add("a.md", { replyTo: id, text: "reply 1" });
+  await ws.add("a.md", { replyTo: id, text: "reply 2" });
+  assert.equal((await ws.view("a.md")).threads[0].comments.length, 3);
+  await ws.remove("a.md", id);
+  assert.deepEqual((await ws.view("a.md")).threads, []);
+  assert.deepEqual(await commentFiles(ws), []);
+});
+
+test("undo and redo step through changes to comments", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 4 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  await ws.update("a.md", id, { text: "edited" });
+  const texts = async () => (await ws.view("a.md")).threads.flatMap((t) => t.comments.map((c) => c.text));
+  await ws.undo("a.md", "undo");
+  assert.deepEqual(await texts(), ["first"]);
+  await ws.undo("a.md", "undo");
+  assert.deepEqual(await texts(), []);
+  await ws.undo("a.md", "redo");
+  await ws.undo("a.md", "redo");
+  assert.deepEqual(await texts(), ["edited"]);
+});
+
+test("undo refuses once something else has changed the comments", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 4 } });
+  const [file] = await commentFiles(ws);
+  const path = join(ws.root, ".comments", "a.md", file);
+  await writeFile(path, (await readFile(path, "utf8")).replace("first", "pulled"));
+  await assert.rejects(ws.undo("a.md", "undo"), /changed outside Discourse/);
+});
+
+test("unreadable comment files are reported, not dropped silently", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 4 } });
+  await writeFile(join(ws.root, ".comments", "a.md", "x.json"), '<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n');
+  const { threads, problems } = await ws.view("a.md");
+  assert.equal(threads.length, 1);
+  assert.match(problems[0], /x\.json has merge conflict markers/);
+  assert.equal((await ws.files()).find((f) => f.path === "a.md")?.attention, true);
+});
+
+test("a deleted file's comments can still be read", async () => {
+  const ws = await workspace("text\n");
+  await assert.rejects(ws.view("b.md"), /b\.md doesn't exist\./);
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 4 } });
+  execFileSync("rm", [join(ws.root, "a.md")]);
+  const view = await ws.view("a.md");
+  assert.deepEqual([view.missing, view.threads[0].span], [true, null]);
+  assert.equal((await ws.files()).find((f) => f.path === "a.md")?.missing, true);
+});
+
+test("paths outside the workspace, or into its comments, are refused", async () => {
+  const ws = await workspace("text\n");
+  for (const path of ["../x.md", ".comments/a.md"]) await assert.rejects(ws.view(path), /isn't a document in this folder/);
+});
+
+const comment = (fields: Partial<StoredComment> = {}): StoredComment => ({ author: "Ada", timestamp: "2026-01-01T00:00:00Z", thread: "t", text: "hi", ...fields });
+
+test("mergeComment takes each field from whichever side changed it", () => {
+  const base = comment();
+  assert.deepEqual(mergeComment(base, comment({ text: "edited" }), comment({ type: "question" })), comment({ text: "edited", type: "question" }));
+  assert.deepEqual(mergeComment(base, comment({ text: "same" }), comment({ text: "same" })), comment({ text: "same" }));
+  assert.equal(mergeComment(base, comment({ text: "one" }), comment({ text: "two" })), undefined);
+});
+
+test("mergeComment deletes a comment one side deleted, unless the other changed it", () => {
+  assert.equal(mergeComment(comment(), null, comment()), null);
+  assert.equal(mergeComment(comment(), null, null), null);
+  assert.equal(mergeComment(comment(), comment({ text: "edited" }), null), undefined);
+});
+
+test("a merge conflict is settled automatically where it can be, and offered to the user where not", async () => {
+  const ws = await workspace("Some text to comment on.\n");
+  await ws.add("a.md", { text: "first", span: { from: 5, to: 9 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "base");
+  const branch = async (name: string, from: string, update: Parameters<Workspace["update"]>[2]) => {
+    git(ws.root, "checkout", "-q", "-b", name, from);
+    await ws.update("a.md", id, update);
+    git(ws.root, "commit", "-q", "-am", name);
+  };
+  // Leaves git's conflicts in place, for the workspace to settle.
+  const merge = (name: string) => assert.throws(() => git(ws.root, "merge", "-q", name));
+  await branch("resolve", "main", { resolved: true });
+  await branch("retype", "main", { type: "question" });
+  merge("resolve");
+  const merged = await ws.view("a.md");
+  assert.deepEqual([merged.conflicts, merged.threads[0].resolved, merged.threads[0].comments[0].type], [[], true, "question"]);
+  assert.equal(git(ws.root, "ls-files", "--unmerged").toString(), "");
+
+  git(ws.root, "commit", "-q", "-m", "merged");
+  await branch("one", "retype", { text: "one" });
+  await branch("two", "retype", { text: "two" });
+  merge("one");
+  const conflicted = await ws.view("a.md");
+  assert.deepEqual(conflicted.conflicts[0].versions.map((v) => v?.text), ["two", "one"]);
+  assert.deepEqual(conflicted.problems, []);
+  await ws.resolveConflict("a.md", id, 1);
+  const settled = await ws.view("a.md");
+  assert.deepEqual([settled.conflicts, settled.threads[0].comments[0].text], [[], "one"]);
+  assert.equal(git(ws.root, "ls-files", "--unmerged").toString(), "");
+});
+
+test("a reply whose thread was deleted elsewhere can bring the thread back", async () => {
+  const ws = await workspace("Some text to comment on.\n");
+  await ws.add("a.md", { text: "first", span: { from: 5, to: 9 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  await ws.add("a.md", { replyTo: id, text: "reply" });
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "base");
+  const replyId = (await ws.view("a.md")).threads[0].comments[1].id;
+  git(ws.root, "rm", "-q", `.comments/a.md/${id}.json`);
+  git(ws.root, "commit", "-q", "-m", "delete thread");
+  const orphaned = await ws.view("a.md");
+  assert.deepEqual([orphaned.threads, orphaned.orphans.map((o) => o.id)], [[], [replyId]]);
+  assert.equal((await ws.files()).find((f) => f.path === "a.md")?.attention, true);
+  await ws.restoreParent("a.md", replyId);
+  const restored = await ws.view("a.md");
+  assert.deepEqual([restored.orphans, restored.threads[0].comments.map((c) => c.text)], [[], ["first", "reply"]]);
+});
+
+test("replies can answer replies, and deleting one deletes those under it", async () => {
+  const ws = await workspace("Some text to comment on.\n");
+  await ws.add("a.md", { text: "first", span: { from: 5, to: 9 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  const add = async (replyTo: string, text: string) => {
+    await ws.add("a.md", { replyTo, text });
+    return (await ws.view("a.md")).threads[0].comments.find((c) => c.text === text)!.id;
+  };
+  const a = await add(id, "a");
+  const b = await add(a, "b");
+  await add(b, "c");
+  await add(id, "d");
+  const parents = async () => {
+    const { comments } = (await ws.view("a.md")).threads[0];
+    return Object.fromEntries(comments.map((c) => [c.text, comments.find((p) => p.id === c.replyTo)?.text]));
+  };
+  assert.deepEqual(await parents(), { first: undefined, a: undefined, b: "a", c: "b", d: undefined });
+  await ws.remove("a.md", b);
+  assert.deepEqual(await parents(), { first: undefined, a: undefined, d: undefined });
+});
+
+test("a reply to a reply deleted elsewhere waits for the user, and can bring back what it's under", async () => {
+  const ws = await workspace("Some text to comment on.\n");
+  await ws.add("a.md", { text: "first", span: { from: 5, to: 9 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  const add = async (replyTo: string, text: string) => {
+    await ws.add("a.md", { replyTo, text });
+    return (await ws.view("a.md")).threads[0].comments.find((c) => c.text === text)!.id;
+  };
+  const a = await add(id, "a");
+  const b = await add(a, "b");
+  const c = await add(b, "c");
+  await add(c, "d");
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "base");
+  git(ws.root, "rm", "-q", `.comments/a.md/${a}.json`, `.comments/a.md/${b}.json`);
+  git(ws.root, "commit", "-q", "-m", "delete a and b, as if c was added to b elsewhere");
+  const cut = await ws.view("a.md");
+  assert.deepEqual([cut.threads[0].comments.map((x) => x.text), cut.orphans.map((x) => [x.text, x.replyTo])], [["first"], [["c", b]]]);
+  assert.equal((await ws.files()).find((f) => f.path === "a.md")?.attention, true);
+  await ws.restoreParent("a.md", c);
+  const restored = await ws.view("a.md");
+  assert.deepEqual([restored.orphans, restored.threads[0].comments.map((x) => x.text).sort()], [[], ["a", "b", "c", "d", "first"]]);
+});

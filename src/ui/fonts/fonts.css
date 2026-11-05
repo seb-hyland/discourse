@@ -1,0 +1,47 @@
+/*
+ * Vendored, unmodified fonts, each under the SIL Open Font License 1.1 (see the LICENSE beside it):
+ * Libron v0.32 (https://github.com/nicoverbruggen/libron, Libron_Web.zip) and
+ * Monaspace v1.400 (https://github.com/githubnext/monaspace, monaspace-webfont-variable).
+ */
+
+@font-face {
+  font-family: "Libron";
+  src: url("./libron/Libron-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libron";
+  src: url("./libron/Libron-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libron";
+  src: url("./libron/Libron-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Libron";
+  src: url("./libron/Libron-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* One variable font: weights 200–800, and slant (up to 11°) for italics. */
+@font-face {
+  font-family: "Monaspace Xenon";
+  src: url("./monaspace/MonaspaceXenonVar.woff2") format("woff2");
+  font-weight: 200 800;
+  font-stretch: 100% 125%;
+  font-style: oblique 0deg 11deg;
+  font-display: swap;
+}
