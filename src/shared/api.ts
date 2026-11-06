@@ -137,6 +137,8 @@ export interface Bridge {
     recents(): Promise<Recent[]>;
     /** Opens one of `recents` in its own window. */
     open(root: string): Promise<void>;
+    /** Forgets one of `recents`, or with none given, all of them. */
+    forget(root?: string): Promise<Recent[]>;
     /** Asks for a folder to open. */
     choose(): Promise<void>;
     onChange(listener: (change: Change) => void): () => void;

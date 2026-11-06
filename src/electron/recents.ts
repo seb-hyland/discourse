@@ -28,3 +28,9 @@ export function describe(root: string): Recent {
     const home = homedir();
     return { root, name: basename(root), location: parent.startsWith(home) ? `~${parent.slice(home.length)}` : parent };
 }
+
+/** Forgets one recent folder, or with none given, all of them. */
+export async function forgetFolders(root?: string): Promise<void> {
+    const recents = root === undefined ? [] : (await recentFolders()).filter((r) => r !== root);
+    await writeFile(file(), JSON.stringify(recents));
+}

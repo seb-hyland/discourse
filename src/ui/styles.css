@@ -1169,9 +1169,30 @@ button.icon.on {
     user-select: none;
 }
 
-.start h1 {
+.start header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
     margin: 0 0 0.6rem;
+}
+
+.start h1 {
+    margin: 0;
     font-size: 20px;
+}
+
+.start .clear {
+    padding: 0.15rem 0.5rem;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.start .clear:hover {
+    background: var(--hover);
+    color: var(--text);
 }
 
 .start section {
@@ -1191,9 +1212,20 @@ button.icon.on {
     list-style: none;
 }
 
-.start li button {
+.start li {
     display: flex;
-    width: 100%;
+    align-items: center;
+    border-radius: 6px;
+}
+
+.start li:hover {
+    background: var(--hover);
+}
+
+.start li .recent {
+    display: flex;
+    flex: 1;
+    min-width: 0;
     gap: 0.6rem;
     align-items: baseline;
     padding: 0.35rem 0.6rem;
@@ -1204,8 +1236,22 @@ button.icon.on {
     text-align: left;
 }
 
-.start li button:hover {
-    background: var(--hover);
+/* Each recent's remove button shows when it's pointed at or focused. */
+.start li button.icon {
+    padding: 0.2rem;
+    margin-right: 0.3rem;
+    color: var(--text-faint);
+    visibility: hidden;
+}
+
+.start li:hover button.icon,
+.start li button.icon:focus-visible {
+    visibility: visible;
+}
+
+.start li button.icon svg {
+    width: 12px;
+    height: 12px;
 }
 
 .start li span {

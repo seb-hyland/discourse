@@ -2,6 +2,9 @@ import { useEffect, useReducer, useState } from "react";
 import type { FileSummary } from "../shared/api.ts";
 import { BackIcon, ChevronIcon, CommentIcon, ForwardIcon, IconButton, SettingsIcon, SidebarIcon } from "./icons.tsx";
 
+/** Where whether the file list is hidden is remembered between visits. */
+const COLLAPSED = "files.collapsed";
+
 interface Folder {
     name: string;
     folders: Map<string, Folder>;
@@ -22,7 +25,11 @@ export function FileTree({
 }) {
     const [filter, setFilter] = useState("");
     const [commentedOnly, setCommentedOnly] = useState(false);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsedState] = useState(() => localStorage.getItem(COLLAPSED) === "true");
+    const setCollapsed = (to: boolean) => {
+        localStorage.setItem(COLLAPSED, String(to));
+        setCollapsedState(to);
+    };
     const { canGoBack, canGoForward } = useHistory();
     const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()) && (!commentedOnly || f.openThreads + f.resolvedThreads > 0));
 

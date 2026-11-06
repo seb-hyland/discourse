@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, net, protocol, shell, type MenuItemConstructorOptions } from "electron";
@@ -6,8 +6,9 @@ import type { ViteDevServer } from "vite";
 import type { Bridge, CommentUpdate, DocumentView, NewComment } from "../shared/api.ts";
 import { openInEditor, type SettingsError } from "../workspace/editor.ts";
 import { Workspace } from "../workspace/workspace.ts";
-import { describe, recentFolders, rememberFolder } from "./recents.ts";
+import { describe, forgetFolders, recentFolders, rememberFolder } from "./recents.ts";
 import { settings, settingsFile } from "./settings.ts";
+import { rememberBounds, windowBounds } from "./windowState.ts";
 
 const BACKGROUND = "#fff5ed";
 
@@ -41,8 +42,7 @@ async function openFolder(root: string) {
     }
     const id = `f${nextId++}`;
     const window = new BrowserWindow({
-        width: 1280,
-        height: 800,
+        ...windowBounds(folders.size > 0),
         title: basename(root),
         backgroundColor: BACKGROUND,
         webPreferences: { preload: join(import.meta.dirname, "preload.cjs") },
@@ -50,7 +50,9 @@ async function openFolder(root: string) {
     folders.set(id, { root, window, workspace });
     const stopWatching = workspace.watch((change) => window.isDestroyed() || window.webContents.send("change", change));
     void workspace.repinAll();
+    rememberBounds(window);
     window.on("page-title-updated", (e) => e.preventDefault());
+    window.webContents.on("did-navigate-in-page", updateGo);
     // A three-finger swipe, where the trackpad is set up for it (two-finger ones are seen by the window).
     window.on("swipe", (_, direction) => (direction === "left" ? go("back") : direction === "right" ? go("forward") : undefined));
     window.on("closed", () => {
@@ -63,8 +65,37 @@ async function openFolder(root: string) {
     });
     await load(window, id);
     await rememberFolder(root);
+    app.addRecentDocument(root);
+    await updateMenu();
     start?.close();
 }
+
+/**
+ * Opens a folder from outside the app: given on the command line, or sent by macOS (dropped on the
+ * Dock icon, picked in Finder's Open With, or from `open`).
+ */
+async function openFromOutside(path: string) {
+    const isFolder = (() => {
+        try {
+            return statSync(path).isDirectory();
+        } catch {
+            return false;
+        }
+    })();
+    if (!isFolder) return dialog.showErrorBox(`Can't open ${basename(path)}`, existsSync(path) ? "Only folders can be opened." : "There's no such folder.");
+    await openFolder(realpathSync(path));
+}
+
+/**
+ * macOS sends folders to open as events, not on the command line, from before the app is ready
+ * (when they're why it was launched) to whenever it's running. Those from before wait for it.
+ */
+const sentBeforeReady: string[] = [];
+app.on("open-file", (e, path) => {
+    e.preventDefault();
+    if (app.isReady()) void openFromOutside(path);
+    else sentBeforeReady.push(path);
+});
 
 /** The calls a window can make, each sent on the channel of its name (see `Bridge`). */
 type Channel = Exclude<keyof Bridge, "onChange">;
@@ -115,6 +146,12 @@ const handlers: Handlers = {
         if ((await recentFolders()).includes(root)) await openFolder(root);
     },
     choose: () => chooseFolder(),
+    forget: async (_, root) => {
+        if (root === undefined) return clearRecents();
+        await forgetFolders(root);
+        await updateMenu();
+        return (await recentFolders()).map(describe);
+    },
 };
 
 /**
@@ -165,6 +202,14 @@ function go(direction: "back" | "forward") {
     if (direction === "forward" && history?.canGoForward()) history.goForward();
 }
 
+/** Enables Go › Back and Forward only when the focused window has somewhere to go. */
+function updateGo() {
+    const history = BrowserWindow.getFocusedWindow()?.webContents.navigationHistory;
+    const menu = Menu.getApplicationMenu();
+    menu!.getMenuItemById("back")!.enabled = !!history?.canGoBack();
+    menu!.getMenuItemById("forward")!.enabled = !!history?.canGoForward();
+}
+
 /**
  * Opens the settings file in the editor it sets, or the file's default app if that doesn't work,
  * failing with where the file is if neither can open it.
@@ -201,27 +246,65 @@ const appMenu: MenuItemConstructorOptions = {
     ],
 };
 
-const menu: MenuItemConstructorOptions[] = [
+const menu = (recents: string[]): MenuItemConstructorOptions[] => [
     ...(process.platform === "darwin" ? [appMenu] : []),
     {
         label: "File",
-        submenu: [{ label: "Open Folder…", accelerator: "CmdOrCtrl+O", click: () => void chooseFolder() }, { type: "separator" }, { role: "close" }],
+        submenu: [
+            { label: "Open Folder…", accelerator: "CmdOrCtrl+O", click: () => void chooseFolder() },
+            {
+                label: "Open Recent",
+                submenu: [
+                    ...recents.map((root): MenuItemConstructorOptions => {
+                        const { name, location } = describe(root);
+                        return { label: `${name} — ${location}`, click: () => void openFolder(root) };
+                    }),
+                    { type: "separator" },
+                    {
+                        label: "Clear Menu",
+                        enabled: recents.length > 0,
+                        click: async () => {
+                            await clearRecents();
+                            // The start window lists them too.
+                            start?.webContents.reload();
+                        },
+                    },
+                ],
+            },
+            { type: "separator" },
+            { role: "close" },
+        ],
     },
     { role: "editMenu" },
     { role: "viewMenu" },
     {
         label: "Go",
         submenu: [
-            { label: "Back", accelerator: "CmdOrCtrl+[", click: () => go("back") },
-            { label: "Forward", accelerator: "CmdOrCtrl+]", click: () => go("forward") },
+            { id: "back", label: "Back", accelerator: "CmdOrCtrl+[", click: () => go("back") },
+            { id: "forward", label: "Forward", accelerator: "CmdOrCtrl+]", click: () => go("forward") },
         ],
     },
     { role: "windowMenu" },
 ];
 
+/** Builds the menu afresh, as Open Recent changes. */
+async function updateMenu() {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(menu(await recentFolders())));
+    updateGo();
+}
+
+/** Forgets recent folders, here and in the Dock (which can only forget them all). */
+async function clearRecents() {
+    await forgetFolders();
+    app.clearRecentDocuments();
+    await updateMenu();
+    return [];
+}
+
 // Not awaited: Electron is only ready once this module has finished loading.
 void app.whenReady().then(async () => {
-    Menu.setApplicationMenu(Menu.buildFromTemplate(menu));
+    await updateMenu();
+    app.on("browser-window-focus", updateGo);
     protocol.handle("workspace", ({ url }) => {
         const { host, pathname } = new URL(url);
         try {
@@ -242,8 +325,7 @@ void app.whenReady().then(async () => {
     // A folder given on the command line (not a flag, nor the app's own path when run unpackaged), or
     // the start window to pick one.
     const argument = process.argv.slice(1).find((arg) => !arg.startsWith("-") && ![app.getAppPath(), import.meta.filename].includes(resolve(arg)));
-    const root = argument && existsSync(argument) ? realpathSync(resolve(argument)) : null;
-    if (argument && !root) dialog.showErrorBox(`Can't open ${argument}`, "There's no such folder.");
-    if (root) await openFolder(root);
-    else showStart();
+    const sent = [...(argument ? [resolve(argument)] : []), ...sentBeforeReady.splice(0)];
+    for (const path of sent) await openFromOutside(path);
+    if (folders.size === 0) showStart();
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Recent } from "../shared/api.ts";
 import { api } from "./api.ts";
+import { CloseIcon, IconButton } from "./icons.tsx";
 
 /** Shown when no folder is open: recent folders to reopen, beside a button to pick another. */
 export function Start() {
@@ -10,15 +11,25 @@ export function Start() {
     return (
         <div className="start">
             <section>
-                <h1>Recents</h1>
+                <header>
+                    <h1>Recents</h1>
+                    {!!recents?.length && (
+                        <button className="clear" onClick={() => void api.forget().then(setRecents)}>
+                            Clear
+                        </button>
+                    )}
+                </header>
                 {recents?.length === 0 && <p className="empty">No recent projects</p>}
                 <ul>
                     {recents?.map(({ root, name, location }) => (
                         <li key={root}>
-                            <button onClick={() => api.open(root)}>
+                            <button className="recent" onClick={() => api.open(root)}>
                                 <strong>{name}</strong>
                                 <span>{location}</span>
                             </button>
+                            <IconButton tip={`Remove ${name} from Recents`} onClick={() => void api.forget(root).then(setRecents)}>
+                                <CloseIcon />
+                            </IconButton>
                         </li>
                     ))}
                 </ul>
