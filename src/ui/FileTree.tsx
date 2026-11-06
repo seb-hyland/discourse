@@ -36,12 +36,19 @@ export function FileTree({
         setCollapsedState(to);
     };
     const { canGoBack, canGoForward } = useHistory();
+    const openThreads = files.reduce((n, f) => n + f.openThreads, 0);
     const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()) && (!commentedOnly || f.openThreads + f.resolvedThreads > 0));
 
     return (
         <nav className={collapsed ? "files collapsed" : "files"}>
             {!collapsed && (
                 <div className="tree">
+                    <button className={current === "" ? "all-threads current" : "all-threads"} onClick={() => onOpen("")}>
+                        <CommentIcon />
+                        <span className="name">All threads</span>
+                        {openThreads > 0 && <span className="count">{openThreads}</span>}
+                    </button>
+                    <hr className="divider" />
                     <FolderContents folder={buildTree(shown)} current={current} onOpen={onOpen} />
                 </div>
             )}

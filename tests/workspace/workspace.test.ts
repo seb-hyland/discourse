@@ -396,3 +396,25 @@ test("search skips the comment files themselves", async () => {
     await ws.add("a.md", { text: "unique-word", span: { from: 0, to: 4 } });
     assert.deepEqual((await ws.search("unique-word", { files: true, comments: false })).files, []);
 });
+
+test("allThreads lists every document's threads, open ones first, down the document", async () => {
+    const ws = await workspace("one\ntwo\nthree\n");
+    await ws.add("a.md", { text: "on three", span: { from: 8, to: 13 } });
+    await ws.add("a.md", { text: "on one", span: { from: 0, to: 3 } });
+    await ws.add("a.md", { text: "on two", span: { from: 4, to: 7 } });
+    const [onTwo] = (await ws.view("a.md")).threads.filter((t) => t.comments[0].text === "on two");
+    await ws.update("a.md", onTwo.id, { resolved: true });
+    await ws.add("a.md", { text: "a reply", replyTo: onTwo.id });
+
+    const [doc, ...others] = await ws.allThreads();
+    assert.equal(others.length, 0);
+    assert.equal(doc.path, "a.md");
+    assert.deepEqual(
+        doc.threads.map((t) => [t.first.text, t.current, t.line, t.resolved, t.replies]),
+        [
+            ["on one", "one", 1, false, 0],
+            ["on three", "three", 3, false, 0],
+            ["on two", "two", 2, true, 1],
+        ],
+    );
+});

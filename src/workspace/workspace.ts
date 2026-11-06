@@ -9,6 +9,7 @@ import type {
     CommentUpdate,
     CommentView,
     Conflict,
+    DocumentThreads,
     DocumentView,
     FileMatch,
     FileSummary,
@@ -144,6 +145,30 @@ export class Workspace {
             });
         }
         return [...summaries.values()].sort((a, b) => a.path.localeCompare(b.path));
+    }
+
+    /** Every document's threads, as `view` places them. Documents that can't be read are left out. */
+    async allThreads(): Promise<DocumentThreads[]> {
+        const documents: DocumentThreads[] = [];
+        for (const path of (await this.commentedPaths()).sort()) {
+            const view = await this.view(path).catch(() => null);
+            if (!view || view.threads.length === 0) continue;
+            const threads = view.threads.map((t) => ({
+                id: t.id,
+                quote: t.quote,
+                current: t.span && view.text.slice(t.span.from, t.span.to),
+                line: t.span && view.text.slice(0, t.span.from).split("\n").length,
+                lost: t.lost,
+                resolved: t.resolved,
+                first: t.comments[0],
+                replies: t.comments.length - 1,
+            }));
+            // Open before resolved, then down the document, with those that can't be placed last.
+            const line = (t: (typeof threads)[number]) => t.line ?? Number.MAX_SAFE_INTEGER;
+            threads.sort((a, b) => Number(a.resolved) - Number(b.resolved) || line(a) - line(b));
+            documents.push({ path, missing: view.missing, threads });
+        }
+        return documents;
     }
 
     /** Every match for `query` in the text of the folder's files, in their comments, or both. */

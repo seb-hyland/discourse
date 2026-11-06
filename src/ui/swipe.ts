@@ -10,6 +10,9 @@ const GESTURE_GAP_MS = 150;
 const REST = 3;
 const RISE = 6;
 
+/** How far a gesture goes sideways before the page starts following it, so small wobbles don't. */
+const DEAD_ZONE = 4;
+
 export type Direction = "back" | "forward";
 
 /** The part of a wheel event a swipe is told by. */
@@ -21,59 +24,92 @@ export interface Wheel {
     scrolls: boolean;
 }
 
+/** What a swipe does as it goes: each `move` is followed by a `commit` or a `cancel`. */
+export interface SwipeEvents {
+    /** The gesture has gone `x` wheel pixels sideways so far; negative is towards going back. */
+    move(x: number): void;
+    /** It went far enough to go `direction`. */
+    commit(direction: Direction): void;
+    /** It stopped short, or turned into scrolling. */
+    cancel(): void;
+}
+
 /**
- * Tells sideways trackpad swipes from a stream of wheel events, once each: fingers moving right go
- * back, left go forward, as in Safari. There's no way to see where one gesture ends and another
- * begins (macOS keeps sending momentum after the fingers lift), so a gesture that has done what it
- * will does nothing more until the wheel stops or speeds up again.
+ * Follows sideways trackpad swipes through a stream of wheel events: fingers moving right go back,
+ * left go forward, as in Safari. There's no way to see where one gesture ends and another begins
+ * (macOS keeps sending momentum after the fingers lift), so a gesture that has done what it will
+ * does nothing more until the wheel stops (`end`, or a pause before the next event) or speeds up again.
  */
-export function swipeDetector(): (wheel: Wheel) => Direction | null {
+export function swipeDetector(events: SwipeEvents) {
     let last = -Infinity;
-    /** Whether the current gesture may still go somewhere. */
+    /** Whether the current gesture may still go somewhere, and whether it's moved the page yet. */
     let armed = false;
+    let moving = false;
     let x = 0;
     let y = 0;
     /** The wheel's speed at its last event, and its slowest since the gesture was spent. */
     let speed = 0;
     let slowest = 0;
 
-    return ({ deltaX, deltaY, timeStamp, scrolls }) => {
-        const now = Math.hypot(deltaX, deltaY);
-        const rising = now > speed;
-        speed = now;
-        if (timeStamp - last > GESTURE_GAP_MS || (!armed && rising && slowest <= REST && now >= slowest + RISE)) {
-            armed = true;
-            x = y = 0;
-        }
-        last = timeStamp;
-        slowest = Math.min(slowest, now);
-        if (!armed) return null;
+    const stopMoving = () => {
+        if (moving) events.cancel();
+        moving = false;
+    };
 
-        const spend = () => {
-            armed = false;
-            slowest = now;
-        };
-        if (scrolls && Math.abs(deltaX) > Math.abs(deltaY)) return (spend(), null);
-        x += deltaX;
-        y += deltaY;
-        if (Math.abs(y) >= DISTANCE / 2 && Math.abs(y) > Math.abs(x)) return (spend(), null);
-        if (Math.abs(x) < DISTANCE || Math.abs(x) < 2 * Math.abs(y)) return null;
-        spend();
-        return x < 0 ? "back" : "forward";
+    return {
+        wheel({ deltaX, deltaY, timeStamp, scrolls }: Wheel) {
+            const now = Math.hypot(deltaX, deltaY);
+            const rising = now > speed;
+            speed = now;
+            if (timeStamp - last > GESTURE_GAP_MS || (!armed && rising && slowest <= REST && now >= slowest + RISE)) {
+                stopMoving();
+                armed = true;
+                x = y = 0;
+            }
+            last = timeStamp;
+            slowest = Math.min(slowest, now);
+            if (!armed) return;
+
+            const spend = () => {
+                armed = false;
+                slowest = now;
+            };
+            if (scrolls && Math.abs(deltaX) > Math.abs(deltaY) && !moving) return spend();
+            x += deltaX;
+            y += deltaY;
+            if (Math.abs(y) >= DISTANCE / 2 && Math.abs(y) > Math.abs(x)) return (spend(), stopMoving());
+            const sideways = Math.abs(x) >= 2 * Math.abs(y);
+            if (!sideways || Math.abs(x) < DEAD_ZONE) return;
+            moving = true;
+            events.move(x);
+            if (Math.abs(x) < DISTANCE) return;
+            spend();
+            moving = false;
+            events.commit(x < 0 ? "back" : "forward");
+        },
+        /** The wheel has stopped: a swipe that didn't go far enough springs back. */
+        end() {
+            stopMoving();
+        },
     };
 }
 
-/** Calls `go` once per sideways trackpad swipe (see `swipeDetector`). Returns a function that stops listening. */
-export function onSwipe(go: (direction: Direction) => void): () => void {
-    const detect = swipeDetector();
+/** Follows sideways trackpad swipes over the window (see `swipeDetector`). Returns a function that stops listening. */
+export function onSwipe(events: SwipeEvents): () => void {
+    const detector = swipeDetector(events);
+    let timer: ReturnType<typeof setTimeout>;
     const onWheel = (e: WheelEvent) => {
         // A pinch comes as a wheel with Control held.
         if (e.ctrlKey) return;
-        const direction = detect({ deltaX: e.deltaX, deltaY: e.deltaY, timeStamp: e.timeStamp, scrolls: scrollsSideways(e.target, e.deltaX) });
-        if (direction) go(direction);
+        detector.wheel({ deltaX: e.deltaX, deltaY: e.deltaY, timeStamp: e.timeStamp, scrolls: scrollsSideways(e.target, e.deltaX) });
+        clearTimeout(timer);
+        timer = setTimeout(detector.end, GESTURE_GAP_MS);
     };
     addEventListener("wheel", onWheel, { passive: true });
-    return () => removeEventListener("wheel", onWheel);
+    return () => {
+        clearTimeout(timer);
+        removeEventListener("wheel", onWheel);
+    };
 }
 
 /** Whether anything from `target` up can still scroll sideways by `deltaX`. */

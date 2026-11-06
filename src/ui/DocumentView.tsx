@@ -2,6 +2,7 @@ import { useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEv
 import type { DocumentView as Doc, Span } from "../shared/api.ts";
 import { CodeView } from "./CodeView.tsx";
 import { MarkdownView } from "./MarkdownView.tsx";
+import { useScrollProgress } from "./scrollProgress.ts";
 import type { Highlight, TextView } from "./textView.ts";
 
 export interface DocumentHandle {
@@ -42,8 +43,7 @@ export function DocumentView({
     const view = useRef<TextView>(null);
     /** Where the selection starts, for placing its Comment button. */
     const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
-    /** How far through the document the view is, from 0 to 1. */
-    const [progress, setProgress] = useState(0);
+    const [progress, onScroll] = useScrollProgress();
 
     const highlights = useMemo((): Highlight[] => {
         const threads = doc.threads.flatMap((t) => {
@@ -98,13 +98,6 @@ export function DocumentView({
         if (offset == null) return;
         const hit = doc.threads.filter((t) => t.span && t.span.from <= offset && offset < t.span.to).sort((a, b) => length(a.span!) - length(b.span!))[0];
         if (hit) onActivate(hit.id);
-    };
-
-    const onScroll = () => {
-        const box = container.current!;
-        // The space left below the text, to scroll its end up, doesn't count.
-        const end = box.scrollHeight - box.clientHeight - parseFloat(getComputedStyle(box).paddingBottom);
-        setProgress(end > 0 ? Math.min(box.scrollTop / end, 1) : 0);
     };
 
     const TextView = /\.(md|markdown)$/i.test(doc.path) ? MarkdownView : CodeView;

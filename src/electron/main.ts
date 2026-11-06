@@ -141,6 +141,7 @@ const handlers: Handlers = {
     },
     editSettings: () => editSettings(),
     search: ({ workspace }, query, within) => workspace.search(query, within),
+    allThreads: ({ workspace }) => workspace.allThreads(),
     recents: async () => (await recentFolders()).map(describe),
     open: async (_, root) => {
         // Only folders the start window was offered.

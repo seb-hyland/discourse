@@ -105,6 +105,28 @@ export interface Change {
     listChanged: boolean;
 }
 
+/** A thread as listed with every other in the folder: where it is, and how it starts. */
+export interface ThreadSummary {
+    id: string;
+    /** The text it was placed on. */
+    quote: string;
+    /** The text it's on now, and on which line that starts, or null if it can't be placed. */
+    current: string | null;
+    line: number | null;
+    lost?: Lost;
+    resolved: boolean;
+    first: CommentView;
+    replies: number;
+}
+
+/** A document's threads: open ones in the order they're in it, then resolved ones. */
+export interface DocumentThreads {
+    path: string;
+    /** The file is gone, but comments on it remain. */
+    missing?: boolean;
+    threads: ThreadSummary[];
+}
+
 /** Where to search: nowhere, the open document, or the whole folder. */
 export type Scope = "none" | "current" | "all";
 
@@ -165,6 +187,8 @@ export interface Bridge {
     /** Opens a file the app can't show, like a PDF, in its default app; anything else is shown in its folder. */
     openFile(path: string): Promise<void>;
     editSettings(): Promise<void>;
+    /** Every document with threads, in order of path. */
+    allThreads(): Promise<DocumentThreads[]>;
     /** Searches every document's text, comments, or both. */
     search(query: string, within: { files: boolean; comments: boolean }): Promise<SearchResults>;
     recents(): Promise<Recent[]>;

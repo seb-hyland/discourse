@@ -138,7 +138,7 @@ function CommentHeader({ comment, status, children }: { comment: CommentView; st
 }
 
 /** A comment to read, without its buttons: folded, only its first lines show. */
-function CommentBody({ comment, status, folded, children }: { comment: CommentView; status?: string; folded?: boolean; children?: ReactNode }) {
+export function CommentBody({ comment, status, folded, children }: { comment: CommentView; status?: string; folded?: boolean; children?: ReactNode }) {
     return (
         <div className={folded ? "comment folded" : "comment"}>
             <CommentHeader comment={comment} status={status} />
