@@ -318,23 +318,19 @@ main > .loading {
     padding: 0.5rem;
 }
 
-/* Finding a file, above the footer's buttons. */
+/* Finding a file, under the files and above the footer's line. */
 .files .filter {
     display: flex;
+    align-items: center;
     gap: 0.35rem;
-    padding: 0.5rem 0.5rem 0;
-    border-top: 1px solid var(--border);
-}
-
-.files .filter + footer {
-    border-top: 0;
+    padding: 0.25rem 0.5rem 0.5rem;
 }
 
 /* Hiding the sidebar, back, forward, search and settings. */
 .files footer {
     display: flex;
     gap: 0.2rem;
-    padding: 0.35rem 0.5rem 0.5rem;
+    padding: 0.5rem;
     border-top: 1px solid var(--border);
 }
 
@@ -342,17 +338,18 @@ main > .loading {
     flex: 1;
 }
 
-/* As tall as the icon button beside it, which the row stretches it to. */
+/* Close to the height of the icon beside it, rather than its button. */
 .files .filter input {
     flex: 1;
     min-width: 0;
-    padding: 0 0.5rem;
+    height: 20px;
+    padding: 0 0.4rem;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg);
     color: inherit;
     font: inherit;
-    font-size: 13px;
+    font-size: 12.5px;
 }
 
 /* Above the files, showing every thread when chosen. */
