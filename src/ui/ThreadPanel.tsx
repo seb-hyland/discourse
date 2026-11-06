@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { CommentUpdate, CommentView, Conflict, DocumentView, Span, ThreadView } from "../shared/api.ts";
+import type { CommentUpdate, CommentView, Conflict, DocumentView, Lost, Span, ThreadView } from "../shared/api.ts";
 import type { Actions } from "./App.tsx";
 import { DateField } from "./DateField.tsx";
 import { CheckIcon, DeleteIcon, EditIcon, ExternalIcon, IconButton, LinkIcon, MoveIcon, ReplyIcon } from "./icons.tsx";
@@ -44,8 +44,15 @@ export function ThreadPanel({ doc, active, draft, selection, onActivate, onMove,
     <aside className="threads">
       {doc.problems.length > 0 && (
         <section className="thread problems">
-          {doc.problems.map((problem) => (
-            <p key={problem}>{problem}</p>
+          {doc.problems.map(({ file, message }) => (
+            <div key={file}>
+              <p>
+                <code>{file}</code> {message}
+              </p>
+              <div className="actions">
+                <button onClick={() => void actions.openCommentFile(file)}>Open in editor</button>
+              </div>
+            </div>
           ))}
         </section>
       )}
@@ -55,7 +62,7 @@ export function ThreadPanel({ doc, active, draft, selection, onActivate, onMove,
       {doc.orphans.map((reply) => (
         <section key={reply.id} className="thread attention">
           <p className="original">
-            {reply.replyTo ? "The reply this answers was deleted on another branch." : "This reply's thread was deleted on another branch."}
+            {reply.replyTo ? "The reply this answers was deleted." : "This reply's thread was deleted."}
           </p>
           <CommentBody comment={reply} />
           <div className="actions">
@@ -69,32 +76,55 @@ export function ThreadPanel({ doc, active, draft, selection, onActivate, onMove,
   );
 }
 
-/** A comment two branches changed differently: each version, to keep one. */
+/** A comment two branches changed differently: each side's version, to keep one. */
 function ConflictCard({ conflict, actions }: { conflict: Conflict; actions: Actions }) {
   const deleted = conflict.versions.includes(null);
   const quotes = new Set(conflict.versions.map((v) => v?.quote).filter(Boolean));
+  const replies = conflict.replies === 1 ? "its reply" : `its ${conflict.replies} replies`;
   return (
     <section className="thread attention">
       <p className="original">
-        {deleted ? "One branch deleted this comment and the other changed it." : "Two branches changed this comment differently."} Keep one version:
+        {deleted ? "One side deleted this comment and the other changed it." : "Both sides changed this comment."} Keep one version:
       </p>
       {quotes.size === 1 && <blockquote className="anchor">{[...quotes][0]}</blockquote>}
-      {conflict.versions.map((version, i) => (
-        <div key={i} className="version">
-          {version ? (
-            <>
-              {quotes.size > 1 && <blockquote className="anchor">{version.quote}</blockquote>}
-              <CommentBody comment={version} status={version.resolved ? "Resolved" : undefined} />
-            </>
-          ) : (
-            <p className="original">Deleted</p>
-          )}
-          <div className="actions">
-            <button onClick={() => void actions.resolveConflict(conflict.id, i)}>{version ? "Keep this version" : "Keep it deleted"}</button>
+      {conflict.versions.map((version, i) => {
+        const { label, commit } = conflict.sides[i];
+        return (
+          <div key={i} className="version">
+            <p className="side">
+              <strong>{label}</strong>
+              {commit && ` · ${commit.author}: ${commit.subject}`}
+            </p>
+            {version ? (
+              <>
+                {quotes.size > 1 && <blockquote className="anchor">{version.quote}</blockquote>}
+                <CommentBody comment={version} status={version.resolved ? "Resolved" : undefined} />
+              </>
+            ) : (
+              <p className="original">Deleted</p>
+            )}
+            <div className="actions">
+              <button onClick={() => void actions.resolveConflict(conflict.id, i)}>
+                {version ? "Keep this version" : conflict.replies ? `Keep it deleted, with ${replies}` : "Keep it deleted"}
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </section>
+  );
+}
+
+/** Who wrote a comment, when, and its type and status, beside any buttons. */
+function CommentHeader({ comment, status, children }: { comment: CommentView; status?: string; children?: ReactNode }) {
+  return (
+    <header>
+      <strong>{comment.author}</strong>
+      <time dateTime={comment.timestamp}>{new Date(comment.timestamp).toLocaleDateString()}</time>
+      {comment.type && <span className="type">{comment.type}</span>}
+      {status && <span className="type">{status}</span>}
+      {children && <menu>{children}</menu>}
+    </header>
   );
 }
 
@@ -102,12 +132,7 @@ function ConflictCard({ conflict, actions }: { conflict: Conflict; actions: Acti
 function CommentBody({ comment, status, folded, children }: { comment: CommentView; status?: string; folded?: boolean; children?: ReactNode }) {
   return (
     <div className={folded ? "comment folded" : "comment"}>
-      <header>
-        <strong>{comment.author}</strong>
-        <time dateTime={comment.timestamp}>{new Date(comment.timestamp).toLocaleDateString()}</time>
-        {comment.type && <span className="type">{comment.type}</span>}
-        {status && <span className="type">{status}</span>}
-      </header>
+      <CommentHeader comment={comment} status={status} />
       <Markdown value={comment.text} />
       {children}
     </div>
@@ -138,7 +163,7 @@ function Thread({ path, thread, current, active, onActivate, onMove, actions }: 
   return (
     <section ref={ref} className={classes} onClick={onActivate}>
       <header>
-        <blockquote className={current === null ? "anchor missing" : "anchor"}>{current ?? thread.quote}</blockquote>
+        <blockquote className={current === null && thread.lost !== "deleted" ? "anchor missing" : "anchor"}>{current ?? thread.quote}</blockquote>
         <menu onClick={(e) => e.stopPropagation()}>
           {thread.span && (
             <IconButton tip="Open in editor" onClick={() => void actions.openInEditor(thread.span!)}>
@@ -165,29 +190,41 @@ function Thread({ path, thread, current, active, onActivate, onMove, actions }: 
             Show more
           </button>
         </CommentBody>
-      ) : current === null ? (
-        <p className="original">This text can't be found any more. Select where the thread belongs, then use Move to selection.</p>
+      ) : thread.lost ? (
+        lostMessage(thread.lost, thread.comments[0].author) && <p className="original">{lostMessage(thread.lost, thread.comments[0].author)}</p>
       ) : (
         current !== thread.quote && <p className="original">Originally: “{thread.quote}”</p>
       )}
       {!folded && (
         <>
-          <Comment path={path} comment={thread.comments[0]} first replies={thread.comments.length - 1} onReply={() => setReplying(true)} actions={actions} />
+          <Comment path={path} comment={thread.comments[0]} first onReply={() => setReplying(true)} actions={actions} />
           <Replies path={path} comments={thread.comments.slice(1)} actions={actions} />
           {replying && (
             <Composer label="Reply" onSubmit={(text) => actions.add({ replyTo: thread.id, text })} onDone={() => setReplying(false)} onCancel={() => setReplying(false)} />
           )}
           {thread.resolved && (
-            <div className="comment">
-              <button className="more" onClick={(e) => (e.stopPropagation(), setOpened(false))}>
-                Show less
-              </button>
-            </div>
+            <button className="more" onClick={(e) => (e.stopPropagation(), setOpened(false))}>
+              Show less
+            </button>
           )}
         </>
       )}
     </section>
   );
+}
+
+/** Why a thread isn't on the document, and what to do; nothing for a deleted document, which says so itself. */
+function lostMessage(lost: Lost, author: string): string | null {
+  switch (lost) {
+    case "removed":
+      return "The text this was on has been removed.";
+    case "moved":
+      return "The text here has changed too much to be sure it's the right place.";
+    case "unknownBase":
+      return `This was placed on a version of the file that was never pushed. Ask ${author} to open it in Discourse and push again.`;
+    case "deleted":
+      return null;
+  }
 }
 
 /** A thread's replies to `under`, or directly to the thread, each followed by its own replies. */
@@ -197,10 +234,9 @@ function Replies({ path, comments, under, actions }: { path: string; comments: C
 
 function Reply({ path, reply, comments, actions }: { path: string; reply: CommentView; comments: CommentView[]; actions: Actions }) {
   const [replying, setReplying] = useState(false);
-  const count = (id: string): number => comments.filter((c) => c.replyTo === id).reduce((n, c) => n + 1 + count(c.id), 0);
   return (
     <>
-      <Comment path={path} comment={reply} replies={count(reply.id)} onReply={() => setReplying(true)} actions={actions} />
+      <Comment path={path} comment={reply} onReply={() => setReplying(true)} actions={actions} />
       <div className="nested">
         <Replies path={path} comments={comments} under={reply.id} actions={actions} />
         {replying && (
@@ -211,13 +247,11 @@ function Reply({ path, reply, comments, actions }: { path: string; reply: Commen
   );
 }
 
-function Comment({ path, comment, first = false, replies, onReply, actions }: {
+function Comment({ path, comment, first = false, onReply, actions }: {
   path: string;
   comment: CommentView;
   /** Whether it starts its thread. */
   first?: boolean;
-  /** How many replies deleting it deletes too. */
-  replies: number;
   onReply: () => void;
   actions: Actions;
 }) {
@@ -227,11 +261,6 @@ function Comment({ path, comment, first = false, replies, onReply, actions }: {
     await navigator.clipboard.writeText(`/${encodeURI(path)}#comment-${comment.id}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
-  };
-  const remove = () => {
-    const counted = replies === 1 ? "1 reply" : `${replies} replies`;
-    const what = first ? (replies ? `this thread and its ${counted}` : "this thread") : replies ? `this reply and the ${counted} to it` : "this reply";
-    if (confirm(`Delete ${what}?`)) void actions.remove(comment.id);
   };
 
   if (editing) {
@@ -243,25 +272,20 @@ function Comment({ path, comment, first = false, replies, onReply, actions }: {
   }
   return (
     <div className={first ? "comment" : "comment reply"} data-comment={comment.id}>
-      <header>
-        <strong>{comment.author}</strong>
-        <time dateTime={comment.timestamp}>{new Date(comment.timestamp).toLocaleDateString()}</time>
-        {comment.type && <span className="type">{comment.type}</span>}
-        <menu>
-          <IconButton tip="Reply" onClick={onReply}>
-            <ReplyIcon />
-          </IconButton>
-          <IconButton tip="Copy link" onClick={copyLink}>
-            {copied ? <CheckIcon /> : <LinkIcon />}
-          </IconButton>
-          <IconButton tip="Edit" onClick={() => setEditing(true)}>
-            <EditIcon />
-          </IconButton>
-          <IconButton tip="Delete" onClick={remove}>
-            <DeleteIcon />
-          </IconButton>
-        </menu>
-      </header>
+      <CommentHeader comment={comment}>
+        <IconButton tip="Reply" onClick={onReply}>
+          <ReplyIcon />
+        </IconButton>
+        <IconButton tip="Copy link" onClick={copyLink}>
+          {copied ? <CheckIcon /> : <LinkIcon />}
+        </IconButton>
+        <IconButton tip="Edit" onClick={() => setEditing(true)}>
+          <EditIcon />
+        </IconButton>
+        <IconButton tip="Delete" onClick={() => void actions.remove(comment.id)}>
+          <DeleteIcon />
+        </IconButton>
+      </CommentHeader>
       <Collapsible>
         <Markdown value={comment.text} />
       </Collapsible>
@@ -276,13 +300,13 @@ function CommentEditor({ comment, onSave, onDone }: {
   onDone: () => void;
 }) {
   const [author, setAuthor] = useState(comment.author);
-  const [date, setDate] = useState(() => new Date(comment.timestamp));
+  const [date, setDate] = useState(comment.timestamp.slice(0, 10));
   const [type, setType] = useState(comment.type ?? "");
   const save = (text: string) =>
     onSave({
       text,
       author: author.trim() || undefined,
-      timestamp: date.getTime() === Date.parse(comment.timestamp) ? undefined : date.toISOString(),
+      date: date === comment.timestamp.slice(0, 10) ? undefined : date,
       type: type.trim(),
     });
 

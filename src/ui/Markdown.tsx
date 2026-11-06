@@ -1,10 +1,11 @@
 import { editorViewCtx } from "@milkdown/kit/core";
 import { useEffect, useMemo, useRef } from "react";
-import { renderMarkdown } from "./markdown.ts";
+import { renderMarkdown, useLanguagesLoaded } from "./markdown.ts";
 import { createMarkdownEditor } from "./milkdown.ts";
 
 export function Markdown({ value }: { value: string }) {
-  const content = useMemo(() => renderMarkdown(value), [value]);
+  const languages = useLanguagesLoaded();
+  const content = useMemo(() => renderMarkdown(value), [value, languages]);
   return <div className="markdown">{content}</div>;
 }
 

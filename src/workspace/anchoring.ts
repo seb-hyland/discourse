@@ -1,10 +1,13 @@
-import { diffWordsWithSpace } from "diff";
+import { Worker } from "node:worker_threads";
+import { diffChars, type ChangeObject } from "diff";
 import type { Span } from "../shared/api.ts";
 
 export interface Edit {
   from: number;
   to: number;
+  /** The text replacing `from`–`to`, and the text it replaces. */
   text: string;
+  removed: string;
 }
 
 /**
@@ -24,31 +27,66 @@ export function shift(span: Span, edit: Edit): Span | null {
   return shifted.from < shifted.to ? shifted : null;
 }
 
-/** The edits that turn `before` into `after`, each in the coordinates left by the previous ones. */
-export function diffEdits(before: string, after: string): Edit[] {
+let worker: Worker | null = null;
+const pending = new Map<number, (changes: ChangeObject<string>[]) => void>();
+let nextId = 0;
+
+/**
+ * The edits that turn `before` into `after`, word by word, each in the coordinates left by the
+ * previous ones. Diffed in a worker, as a long diff can take seconds.
+ */
+export function diffEdits(before: string, after: string): Promise<Edit[]> {
+  worker ??= new Worker(new URL("./diffWorker.ts", import.meta.url)).on("message", ({ id, changes }) => {
+    pending.get(id)!(changes);
+    pending.delete(id);
+    // Only kept running while it has work, so it doesn't keep the process alive.
+    if (pending.size === 0) worker!.unref();
+  });
+  worker.ref();
+  const id = nextId++;
+  worker.postMessage({ id, before, after });
+  return new Promise((done) => pending.set(id, (changes) => done(toEdits(changes))));
+}
+
+function toEdits(changes: ChangeObject<string>[]): Edit[] {
   const edits: Edit[] = [];
   let pos = 0;
   let pending: Edit | null = null;
-  const flush = () => {
-    if (!pending) return;
-    edits.push(pending);
-    pos = pending.from + pending.text.length;
-    pending = null;
-  };
-  for (const part of diffWordsWithSpace(before, after)) {
+  for (const part of changes) {
     if (!part.added && !part.removed) {
-      flush();
-      pos += part.value.length;
+      if (pending) edits.push(pending);
+      pos = (pending ? pending.from + pending.text.length : pos) + part.value.length;
+      pending = null;
       continue;
     }
-    pending ??= { from: pos, to: pos, text: "" };
-    if (part.removed) pending.to += part.value.length;
-    else pending.text += part.value;
+    pending ??= { from: pos, to: pos, text: "", removed: "" };
+    if (part.removed) {
+      pending.to += part.value.length;
+      pending.removed += part.value;
+    } else {
+      pending.text += part.value;
+    }
   }
-  flush();
+  if (pending) edits.push(pending);
   return edits;
 }
 
-export function mapSpan(span: Span, edits: Edit[]): Span | null {
-  return edits.reduce<Span | null>((s, edit) => s && shift(s, edit), span);
+/**
+ * Maps a span through edits. Where one word edit replaces all of the span with similar text, the
+ * two are compared character by character, so fixing a typo in a commented word keeps the comment.
+ */
+export function mapSpan(span: Span, edits: Edit[], refine = true): Span | null {
+  return edits.reduce<Span | null>((s, edit) => {
+    if (!s) return null;
+    const covers = edit.from <= s.from && s.to <= edit.to;
+    if (!refine || !covers || !resembles(edit.removed, edit.text)) return shift(s, edit);
+    const inner = mapSpan({ from: s.from - edit.from, to: s.to - edit.from }, toEdits(diffChars(edit.removed, edit.text)), false);
+    return inner && { from: inner.from + edit.from, to: inner.to + edit.from };
+  }, span);
+}
+
+/** Whether `now` still shares at least half its characters with `quote`, the text it was placed on. */
+export function resembles(quote: string, now: string): boolean {
+  const kept = diffChars(quote, now).reduce((n, part) => (part.added || part.removed ? n : n + part.value.length), 0);
+  return kept * 2 >= Math.max(quote.length, now.length);
 }

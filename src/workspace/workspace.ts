@@ -3,9 +3,25 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { watch } from "chokidar";
-import type { Change, CommentUpdate, CommentView, Conflict, DocumentView, FileSummary, NewComment, Span, ThreadView } from "../shared/api.ts";
-import { diffEdits, mapSpan, type Edit } from "./anchoring.ts";
-import { authorName, beforeDeletion, blobId, git, isPushed, listFiles, readBlob, remotesState, settle, storeBlob, unmerged } from "./git.ts";
+import type { Change, CommentUpdate, CommentView, Conflict, DocumentView, FileSummary, Lost, NewComment, Problem, Span, ThreadView } from "../shared/api.ts";
+import { diffEdits, mapSpan, resembles, type Edit } from "./anchoring.ts";
+import {
+  authorName,
+  beforeDeletion,
+  blobId,
+  busy,
+  git,
+  ignoredPaths,
+  isPushed,
+  listFiles,
+  pushedBlob,
+  readBlob,
+  remotesState,
+  settle,
+  sides,
+  storeBlob,
+  unmerged,
+} from "./git.ts";
 
 /**
  * Where a thread is: `from` and `to` are offsets into the text git knows as blob `base`, which
@@ -35,20 +51,19 @@ export interface StoredComment {
 
 export const COMMENTS_DIR = ".comments";
 
-const BINARY = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tar|woff2?|ttf|otf|mp[34]|mov|wasm|exe|dylib|so|o|a)$/i;
-
 interface Loaded {
   path: string;
   /** The file's bytes, or null if it's gone. */
   content: Buffer | null;
   text: string;
   comments: Map<string, StoredComment>;
-  problems: string[];
-  /** Comments a merge left for the user to settle: each side's version, or null where it was deleted. */
+  problems: Problem[];
+  /** Comments a merge left for the user to settle, by id: each side's version, or null where it was deleted. */
   conflicts: Map<string, (StoredComment | null)[]>;
-  /** Where each thread is in `text`, by its first comment's id. */
-  spans: Map<string, Span | null>;
 }
+
+/** Where each thread is in a document's text, by its first comment's id, or why it can't be placed. */
+type Places = Map<string, Span | Lost>;
 
 interface Write {
   file: string;
@@ -59,46 +74,48 @@ interface Write {
 export class Workspace {
   readonly root: string;
   readonly author: string;
+  private readonly gitDir: string;
   /** Each document's changes to its comments, for undo and redo. */
   private history = new Map<string, { undo: Write[][]; redo: Write[][] }>();
   /** What this app last wrote to each comment file, to tell whether something else changed it since. */
   private written = new Map<string, string | null>();
   private baseTexts = new Map<string, string | null>();
+  /** The edits from one blob's text to another's, by both ids. */
+  private diffs = new Map<string, Promise<Edit[] | null>>();
   private pushed = { remotes: "", blobs: new Set<string>() };
 
-  private constructor(root: string, author: string) {
+  private constructor(root: string, author: string, gitDir: string) {
     this.root = root;
     this.author = author;
+    this.gitDir = gitDir;
   }
 
   static async open(root: string): Promise<Workspace> {
-    await git(root, ["rev-parse"]).catch(() => {
+    const gitDir = await git(root, ["rev-parse", "--absolute-git-dir"]).catch(() => {
       throw new Error(`${root} isn't in a git repository. Discourse keeps comments alongside git history; jj repositories need to be colocated with git.`);
     });
-    return new Workspace(root, await authorName(root));
+    return new Workspace(root, await authorName(root), gitDir.trim());
   }
 
   async files(): Promise<FileSummary[]> {
     const summaries = new Map<string, FileSummary>();
     for (const path of await listFiles(this.root)) {
-      if (!BINARY.test(path) && !isOwn(path) && existsSync(join(this.root, path))) {
-        summaries.set(path, { path, openThreads: 0, resolvedThreads: 0 });
-      }
+      if (!isOwn(path)) summaries.set(path, { path, openThreads: 0, resolvedThreads: 0 });
     }
-    const conflicts = await this.merge("");
-    for (const [path, files] of await this.allCommentFiles()) {
-      const { comments, problems } = await this.readComments(files.filter((f) => !conflicts.has(f)));
-      const roots = [...comments.values()].filter((c) => c.anchor);
+    for (const path of await this.commentedPaths()) {
+      const loaded = await this.load(path).catch(() => null);
+      const roots = loaded ? [...loaded.comments.values()].filter((c) => c.anchor) : [];
       const open = roots.filter((c) => !c.resolved).length;
       summaries.set(path, {
         path,
         openThreads: open,
         resolvedThreads: roots.length - open,
-        missing: !existsSync(join(this.root, path)) || undefined,
+        missing: (loaded && !loaded.content) || undefined,
         attention:
-          problems.length > 0 ||
-          files.some((f) => conflicts.has(f)) ||
-          [...comments.values()].some((c) => c.thread && !comments.has(c.replyTo ?? c.thread)) ||
+          !loaded ||
+          loaded.problems.length > 0 ||
+          loaded.conflicts.size > 0 ||
+          [...loaded.comments.values()].some((c) => !c.anchor && missingParent(loaded, c)) ||
           undefined,
       });
     }
@@ -107,17 +124,29 @@ export class Workspace {
 
   /** The absolute path of a document, refusing anything outside the workspace or that isn't one. */
   documentPath(path: string): string {
-    const absolute = resolve(this.root, path);
-    const rel = relative(this.root, absolute);
+    const rel = relative(this.root, resolve(this.root, path));
     if (!rel || rel.startsWith("..") || isAbsolute(rel) || isOwn(rel)) throw new Error(`"${path}" isn't a document in this folder.`);
-    return absolute;
+    return join(this.root, rel);
+  }
+
+  /** The absolute path of a comment file, given its path in the workspace. */
+  commentFilePath(file: string): string {
+    const rel = relative(join(this.root, COMMENTS_DIR), resolve(this.root, file));
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`"${file}" isn't a comment file.`);
+    return join(this.root, COMMENTS_DIR, rel);
   }
 
   /** The document and its threads, first moving anchors that aren't pushed yet onto its current text. */
   async view(path: string): Promise<DocumentView> {
     const loaded = await this.load(path);
-    await this.repin(loaded);
-    return toView(loaded);
+    const places = await this.place(loaded);
+    await this.repin(loaded, places);
+    return this.toView(loaded, places);
+  }
+
+  /** Moves the anchors that aren't pushed yet in every document, as `view` would. */
+  async repinAll(): Promise<void> {
+    for (const path of await this.commentedPaths()) await this.view(path).catch(() => {});
   }
 
   async add(path: string, input: NewComment): Promise<void> {
@@ -139,7 +168,10 @@ export class Workspace {
     const comment = { ...find(loaded, id) };
     if (input.text !== undefined) comment.text = input.text;
     if (input.author) comment.author = input.author;
-    if (input.timestamp) comment.timestamp = localTimestamp(new Date(input.timestamp));
+    if (input.date) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error(`"${input.date}" isn't a date.`);
+      comment.timestamp = input.date + comment.timestamp.slice(10);
+    }
     if (input.type !== undefined) comment.type = input.type || undefined;
     if ((input.resolved !== undefined || input.span) && !comment.anchor) {
       throw new Error("Only a thread's first comment can resolve or move it.");
@@ -164,7 +196,7 @@ export class Workspace {
     for (const { file } of writes) {
       if ((await readOrNull(file)) !== this.written.get(file)) {
         this.history.delete(path);
-        throw new Error(`Can't ${direction}: these comments have changed outside Discourse since.`);
+        throw new Error(`Can't ${direction}: these comments have changed outside Discourse since, so their undo history was cleared.`);
       }
     }
     back!.pop();
@@ -172,45 +204,56 @@ export class Workspace {
     for (const write of writes) await this.write(write.file, direction === "undo" ? write.before : write.after);
   }
 
+  /** Settles a conflict with one side's version. Keeping it deleted deletes its replies too. */
   async resolveConflict(path: string, id: string, version: number): Promise<void> {
-    const file = this.commentFile(path, id);
-    const versions = (await this.merge(path)).get(file);
+    const loaded = await this.load(path);
+    const versions = loaded.conflicts.get(id);
     if (!versions) throw new Error("This conflict has already been settled.");
     const chosen = versions[version];
+    const file = this.commentFile(path, id);
     await this.write(file, chosen && serialize(chosen));
     await settle(this.root, relative(this.root, file), !chosen);
+    const replies = chosen ? [] : answers(loaded, id);
+    if (replies.length) await this.change(path, replies.map((i) => [i, null]));
   }
 
   /** Brings back, from history, the deleted comment a reply answers, and any it was under that are gone too. */
   async restoreParent(path: string, replyId: string): Promise<void> {
     const loaded = await this.load(path);
-    const reply = find(loaded, replyId);
     const restored: [string, StoredComment][] = [];
-    for (let id = reply.replyTo ?? reply.thread!; !loaded.comments.has(id); ) {
+    for (let id = answered(find(loaded, replyId)); !loaded.comments.has(id); ) {
       const content = await beforeDeletion(this.root, relative(this.root, this.commentFile(path, id)));
-      if (!content) throw new Error("The comment this replies to isn't in the history, so it can't be restored.");
+      if (!content) throw new Error("The comment this replies to isn't in the history, so it can't be restored. You can still delete the reply.");
       const comment: StoredComment = JSON.parse(content.toString("utf8"));
       restored.push([id, comment]);
       if (comment.anchor) break;
-      id = comment.replyTo ?? comment.thread!;
+      id = answered(comment);
     }
     await this.change(path, restored);
   }
 
-  /** The 1-based line and column of `offset` into a document's text. */
-  async position(path: string, offset: number): Promise<{ line: number; column: number }> {
-    const before = (await this.load(path)).text.slice(0, offset);
-    return { line: before.split("\n").length, column: before.length - before.lastIndexOf("\n") };
+  /** Brings back a deleted document as it was before the latest commit that deleted it. */
+  async restoreDocument(path: string): Promise<void> {
+    const content = await beforeDeletion(this.root, relative(this.root, this.documentPath(path)));
+    if (!content) throw new Error(`${path} isn't in the history, so it can't be restored.`);
+    await mkdir(dirname(this.documentPath(path)), { recursive: true });
+    await writeFile(this.documentPath(path), content, { flag: "wx" }).catch(() => {
+      throw new Error(`${path} is already back.`);
+    });
   }
 
   /**
-   * Reports files changing on disk. Edits to a commented document also move its anchors that
-   * aren't pushed yet, even while it isn't open.
+   * Reports files changing on disk, other than those git ignores. Edits to a commented document
+   * also move its anchors that aren't pushed yet, even while it isn't open.
    */
-  watch(onChange: (change: Change) => void): () => Promise<void> {
+  async watch(onChange: (change: Change) => void): Promise<() => Promise<void>> {
+    const ignored = new Set([".git", ".jj", ...(await ignoredPaths(this.root))]);
     const watcher = watch(this.root, {
       ignoreInitial: true,
-      ignored: (absolute) => /(^|\/)(\.git|\.jj|node_modules)(\/|$)/.test(relative(this.root, absolute)),
+      ignored: (absolute) => {
+        const rel = relative(this.root, absolute).split(sep);
+        return rel.some((_, i) => ignored.has(rel.slice(0, i + 1).join("/")));
+      },
     }).on("all", (event, absolute) => {
       const rel = relative(this.root, absolute).split(sep).join("/");
       const comment = rel.startsWith(`${COMMENTS_DIR}/`);
@@ -224,64 +267,80 @@ export class Workspace {
   private async load(path: string): Promise<Loaded> {
     const content = await readFile(this.documentPath(path)).catch((e: NodeJS.ErrnoException) => {
       if (e.code === "ENOENT") return null;
-      throw new Error(e.code === "EISDIR" ? `${path} is a folder.` : `Can't read ${path}: ${e.message}`);
+      throw new Error(
+        e.code === "EISDIR" ? `${path} is a folder.` : e.code === "EACCES" ? `You don't have permission to read ${path}.` : `Can't read ${path} (${e.code}).`,
+      );
     });
-    const conflicts = await this.merge(path);
+    const text = content ? decode(content) : "";
+    if (text.includes("\0")) throw new Error(`${path} isn't a text file.`);
     const files = await readdir(this.commentsDir(path)).then(
       (names) => names.filter((n) => n.endsWith(".json")).map((n) => join(this.commentsDir(path), n)),
       () => [],
     );
-    const { comments, problems } = await this.readComments(files.filter((f) => !conflicts.has(f)));
-    if (!content && comments.size === 0 && conflicts.size === 0) throw new Error(`${path} doesn't exist.`);
-    const text = content ? decode(content) : "";
-    if (text.includes("\0")) throw new Error(`${path} isn't a text file.`);
-
-    const byId = new Map([...conflicts].map(([file, versions]) => [basename(file, ".json"), versions]));
-    const loaded: Loaded = { path, content, text, comments, problems, conflicts: byId, spans: new Map() };
-    const edits = new Map<string, Edit[] | null>();
-    for (const [id, { anchor }] of comments) {
-      if (anchor) loaded.spans.set(id, content && (await this.place(anchor, text, blobId(content), edits)));
-    }
-    return loaded;
+    if (!content && files.length === 0) throw new Error(`${path} doesn't exist.`);
+    const conflicts = await this.merge(path, content, text);
+    const { comments, problems } = await this.readComments(files.filter((f) => !conflicts.has(basename(f, ".json"))));
+    return { path, content, text, comments, problems, conflicts };
   }
 
   /**
-   * Settles the comment files a merge left unmerged, under `path`'s comments or all of them, where
-   * the two sides changed different fields. Returns the rest, by file, with each side's version.
+   * Settles the comment files a merge left unmerged under `path`'s comments, where the two sides
+   * changed different fields, or moved its anchor to the same place. Returns the rest, by id.
    */
-  private async merge(path: string): Promise<Map<string, (StoredComment | null)[]>> {
+  private async merge(path: string, content: Buffer | null, text: string): Promise<Map<string, (StoredComment | null)[]>> {
     const conflicts = new Map<string, (StoredComment | null)[]>();
     const dir = join(COMMENTS_DIR, path);
     for (const [rel, blobs] of await unmerged(this.root, dir)) {
-      if (path && dirname(rel) !== dir) continue;
+      if (dirname(rel) !== dir) continue;
       let versions: (StoredComment | null)[];
       try {
         versions = await Promise.all(blobs.map(async (b) => b && JSON.parse(decode((await readBlob(this.root, b))!))));
       } catch {
         continue; // Not a comment on some side; its markers are reported as a problem.
       }
-      const [base, ours, theirs] = versions;
+      let [base, ours, theirs] = versions;
+      if (ours?.anchor && theirs?.anchor && !sameJson(ours.anchor, theirs.anchor) && content) {
+        const [a, b] = [await this.placeAnchor(ours.anchor, content, text), await this.placeAnchor(theirs.anchor, content, text)];
+        if (typeof a === "object" && sameJson(a, b)) theirs = { ...theirs, anchor: ours.anchor };
+      }
       const merged = mergeComment(base, ours, theirs);
-      const file = join(this.root, rel);
       if (merged === undefined) {
-        conflicts.set(file, [ours, theirs]);
+        conflicts.set(basename(rel, ".json"), [ours, theirs]);
       } else {
-        await this.write(file, merged && serialize(merged));
+        await this.write(join(this.root, rel), merged && serialize(merged));
         await settle(this.root, rel, !merged);
       }
     }
     return conflicts;
   }
 
-  /** Where an anchor is in `text`: its span mapped through the changes since its base text. */
-  private async place({ base, from, to }: Anchor, text: string, blob: string, edits: Map<string, Edit[] | null>): Promise<Span | null> {
-    if (base === blob) return from < to && to <= text.length ? { from, to } : null;
-    if (!edits.has(base)) {
-      const baseText = await this.baseText(base);
-      edits.set(base, baseText === null ? null : diffEdits(baseText, text));
+  private async place({ comments, content, text }: Loaded): Promise<Places> {
+    const places: Places = new Map();
+    for (const [id, { anchor }] of comments) {
+      if (anchor) places.set(id, content ? await this.placeAnchor(anchor, content, text) : "deleted");
     }
-    const baseEdits = edits.get(base);
-    return baseEdits ? mapSpan({ from, to }, baseEdits) : null;
+    return places;
+  }
+
+  /**
+   * Where an anchor is in `text`: its span mapped through the changes since its base text, if
+   * what's there now still looks like what it was placed on.
+   */
+  private async placeAnchor({ base, from, to, quote }: Anchor, content: Buffer, text: string): Promise<Span | Lost> {
+    const blob = blobId(content);
+    let span: Span | null = from < to && to <= text.length ? { from, to } : null;
+    if (base !== blob) {
+      const key = `${base} ${blob}`;
+      if (!this.diffs.has(key)) {
+        if (this.diffs.size > 200) this.diffs.clear();
+        this.diffs.set(key, this.baseText(base).then((baseText) => (baseText === null ? null : diffEdits(baseText, text))));
+      }
+      const edits = await this.diffs.get(key)!;
+      if (!edits) return "unknownBase";
+      span = mapSpan({ from, to }, edits);
+    }
+    if (!span) return "removed";
+    return resembles(quote, text.slice(span.from, span.to)) ? span : "moved";
   }
 
   private async baseText(blob: string): Promise<string | null> {
@@ -292,33 +351,92 @@ export class Workspace {
     return this.baseTexts.get(blob)!;
   }
 
-  private async anchor({ path, content, text }: Loaded, { from, to }: Span): Promise<Anchor> {
+  /**
+   * An anchor on `span` of the document's current text. Where that text is unchanged since the
+   * document was last pushed, it's placed on the pushed version, which others have and which
+   * then never needs moving.
+   */
+  private async anchor({ path, content, text }: Loaded, span: Span): Promise<Anchor> {
     if (!content) throw new Error(`${path} no longer exists, so nothing in it can be commented on.`);
-    if (!(0 <= from && from < to && to <= text.length)) throw new Error("That selection isn't in the document any more.");
+    if (!(0 <= span.from && span.from < span.to && span.to <= text.length)) throw new Error("That selection isn't in the document any more.");
+    const quote = text.slice(span.from, span.to);
+    const pushed = await pushedBlob(this.root, path);
+    const pushedText = pushed && pushed !== blobId(content) ? await this.baseText(pushed) : null;
+    if (pushedText !== null) {
+      const there = mapSpan(span, await diffEdits(text, pushedText), false);
+      if (there && pushedText.slice(there.from, there.to) === quote) return { base: pushed!, ...there, quote };
+    }
     await storeBlob(this.root, content);
-    return { base: blobId(content), from, to, quote: text.slice(from, to) };
+    return { base: blobId(content), ...span, quote };
   }
 
-  /** Moves anchors whose base isn't pushed yet onto the document's current text. */
-  private async repin(loaded: Loaded): Promise<void> {
-    if (!loaded.content) return;
-    const blob = blobId(loaded.content);
+  /**
+   * Moves anchors whose base isn't pushed yet onto the document's current text. Not while git is
+   * changing the working tree, or the document has conflict markers, which are about to change.
+   */
+  private async repin({ path, content, text, comments }: Loaded, places: Places): Promise<void> {
+    if (!content || busy(this.gitDir) || /^<<<<<<< /m.test(text)) return;
+    const blob = blobId(content);
+    const remotes = await remotesState(this.root);
     let stored = false;
-    for (const [id, comment] of loaded.comments) {
-      const span = loaded.spans.get(id);
-      if (!comment.anchor || !span || comment.anchor.base === blob || (await this.isPushed(comment.anchor.base))) continue;
-      if (!stored) await storeBlob(this.root, loaded.content);
+    for (const [id, comment] of comments) {
+      const { anchor } = comment;
+      const span = places.get(id);
+      if (!anchor || typeof span !== "object" || anchor.base === blob || (await this.isPushed(anchor.base, remotes))) continue;
+      // Only the anchor changes, and only if nothing else changed it since this read the file.
+      const file = this.commentFile(path, id);
+      const onDisk = await readOrNull(file).then((c) => c && (JSON.parse(c) as StoredComment), () => null);
+      if (!onDisk || !sameJson(onDisk.anchor, anchor)) continue;
+      if (!stored) await storeBlob(this.root, content);
       stored = true;
-      comment.anchor = { base: blob, ...span, quote: loaded.text.slice(span.from, span.to) };
-      await this.write(this.commentFile(loaded.path, id), serialize(comment));
+      comment.anchor = { base: blob, ...span, quote: text.slice(span.from, span.to) };
+      await this.write(file, serialize({ ...onDisk, anchor: comment.anchor }));
     }
   }
 
-  private async isPushed(blob: string): Promise<boolean> {
-    const remotes = await remotesState(this.root);
+  private async isPushed(blob: string, remotes: string): Promise<boolean> {
     if (remotes !== this.pushed.remotes) this.pushed = { remotes, blobs: new Set() };
     if (!this.pushed.blobs.has(blob) && (await isPushed(this.root, blob))) this.pushed.blobs.add(blob);
     return this.pushed.blobs.has(blob);
+  }
+
+  private async toView(loaded: Loaded, places: Places): Promise<DocumentView> {
+    const { path, content, text, comments, problems } = loaded;
+    const threads: ThreadView[] = [];
+    const orphans: CommentView[] = [];
+    // Replies under a reply whose parent is gone show with it, waiting for the user to restore or delete them.
+    const cutOff = (c: StoredComment): boolean => {
+      const parent = comments.get(answered(c));
+      return parent ? !parent.anchor && cutOff(parent) : missingParent(loaded, c);
+    };
+    for (const [id, comment] of comments) {
+      if (!comment.anchor) {
+        if (missingParent(loaded, comment)) orphans.push({ ...commentView(id, comment), replyTo: comment.replyTo });
+        continue;
+      }
+      const place = places.get(id)!;
+      const thread: [string, StoredComment][] = [[id, comment], ...replies(loaded, id).filter(([, c]) => !cutOff(c))];
+      threads.push({
+        id,
+        span: typeof place === "object" ? place : null,
+        lost: typeof place === "string" ? place : undefined,
+        quote: comment.anchor.quote,
+        resolved: comment.resolved ?? false,
+        // While the reply it answers is in a conflict, a reply shows as answering the thread.
+        comments: thread.map(([id, c]) => ({ ...commentView(id, c), replyTo: c.replyTo && comments.has(c.replyTo) ? c.replyTo : undefined })),
+      });
+    }
+    // Threads that can't be placed come first, to be moved; the rest in document order.
+    threads.sort((a, b) => (a.span?.from ?? -1) - (b.span?.from ?? -1) || a.comments[0].timestamp.localeCompare(b.comments[0].timestamp));
+    const conflicts: Conflict[] = await Promise.all(
+      [...loaded.conflicts].map(async ([id, versions]) => ({
+        id,
+        versions: versions.map((c) => c && { ...commentView(id, c), resolved: c.resolved, quote: c.anchor?.quote }),
+        sides: await sides(this.root, this.gitDir, relative(this.root, this.commentFile(path, id))),
+        replies: answers(loaded, id).length,
+      })),
+    );
+    return { path, text, missing: !content || undefined, threads, conflicts, orphans, problems };
   }
 
   /** Writes or deletes (null) comments, as one step of undo history. */
@@ -357,74 +475,29 @@ export class Workspace {
     return join(this.commentsDir(path), `${id}.json`);
   }
 
-  /** Every comment file, by the path of the document it's on. */
-  private async allCommentFiles(): Promise<Map<string, string[]>> {
+  /** The paths of documents with comment files. */
+  private async commentedPaths(): Promise<string[]> {
     const names = await readdir(this.commentsDir(""), { recursive: true }).catch(() => []);
-    const byPath = new Map<string, string[]>();
-    for (const name of names.filter((n) => n.endsWith(".json"))) {
-      const path = dirname(name).split(sep).join("/");
-      byPath.set(path, [...(byPath.get(path) ?? []), join(this.commentsDir(""), name)]);
-    }
-    return byPath;
+    return [...new Set(names.filter((n) => n.endsWith(".json")).map((n) => dirname(n).split(sep).join("/")))];
   }
 
-  private async readComments(files: string[]): Promise<{ comments: Map<string, StoredComment>; problems: string[] }> {
+  private async readComments(files: string[]): Promise<{ comments: Map<string, StoredComment>; problems: Problem[] }> {
     const comments = new Map<string, StoredComment>();
-    const problems: string[] = [];
+    const problems: Problem[] = [];
     for (const file of files) {
       const content = await readOrNull(file);
       if (content === null) continue; // Deleted since the folder was listed.
-      const name = relative(this.root, file);
       try {
         const comment = JSON.parse(content) as StoredComment;
-        if (typeof comment.text !== "string" || !(comment.anchor || comment.thread)) throw new Error("it's missing its text or its place");
+        if (typeof comment.text !== "string" || !(comment.anchor || comment.thread)) throw new Error();
         comments.set(basename(file, ".json"), comment);
-      } catch (e) {
-        problems.push(
-          /^<<<<<<< /m.test(content)
-            ? `${name} has merge conflict markers. Fix them in your editor.`
-            : `${name} isn't a valid comment: ${(e as Error).message}.`,
-        );
+      } catch {
+        const message = /^<<<<<<< /m.test(content) ? "has merge conflict markers." : "isn't a valid comment.";
+        problems.push({ file: relative(this.root, file).split(sep).join("/"), message });
       }
     }
     return { comments, problems };
   }
-}
-
-function toView(loaded: Loaded): DocumentView {
-  const { path, content, text, comments, problems, spans } = loaded;
-  const threads: ThreadView[] = [];
-  const orphans: CommentView[] = [];
-  // Replies to a comment that's gone, other than for a conflict to be settled, wait for the user
-  // to restore it or delete them, and replies under them with them.
-  const answered = (c: StoredComment) => c.replyTo ?? c.thread!;
-  const isOrphan = (c: StoredComment) => !comments.has(answered(c)) && !loaded.conflicts.has(answered(c));
-  const cutOff = (c: StoredComment): boolean => {
-    const parent = comments.get(answered(c));
-    return parent ? !parent.anchor && cutOff(parent) : isOrphan(c);
-  };
-  for (const [id, comment] of comments) {
-    if (!comment.anchor) {
-      if (isOrphan(comment)) orphans.push({ ...commentView(id, comment), replyTo: comment.replyTo });
-      continue;
-    }
-    const thread: [string, StoredComment][] = [[id, comment], ...replies(loaded, id).filter(([, c]) => !cutOff(c))];
-    threads.push({
-      id,
-      span: spans.get(id) ?? null,
-      quote: comment.anchor.quote,
-      resolved: comment.resolved ?? false,
-      // While the reply it answers is in a conflict, a reply shows as answering the thread.
-      comments: thread.map(([id, c]) => ({ ...commentView(id, c), replyTo: c.replyTo && comments.has(c.replyTo) ? c.replyTo : undefined })),
-    });
-  }
-  // Threads that can't be placed come first, to be moved; the rest in document order.
-  threads.sort((a, b) => (a.span?.from ?? -1) - (b.span?.from ?? -1) || a.comments[0].timestamp.localeCompare(b.comments[0].timestamp));
-  const conflicts: Conflict[] = [...loaded.conflicts].map(([id, versions]) => ({
-    id,
-    versions: versions.map((c) => c && { ...commentView(id, c), resolved: c.resolved, quote: c.anchor?.quote }),
-  }));
-  return { path, text, missing: !content || undefined, threads, conflicts, orphans, problems };
 }
 
 const commentView = (id: string, { author, timestamp, text, type }: StoredComment): CommentView => ({ id, author, timestamp, text, type });
@@ -447,18 +520,23 @@ export function mergeComment(
   const [b, o, t] = [base ?? {}, ours, theirs] as Record<string, unknown>[];
   const merged = { ...o };
   for (const key of new Set([...Object.keys(b), ...Object.keys(o), ...Object.keys(t)])) {
-    const [bv, ov, tv] = [b, o, t].map((c) => JSON.stringify(c[key]));
-    if (ov === tv || tv === bv) continue;
-    if (ov !== bv) return undefined;
+    if (sameJson(o[key], t[key]) || sameJson(t[key], b[key])) continue;
+    if (!sameJson(o[key], b[key])) return undefined;
     merged[key] = t[key];
   }
   return merged as unknown as StoredComment;
 }
 
+/** The comment a reply answers: another reply, or its thread's first comment. */
+const answered = (c: StoredComment) => c.replyTo ?? c.thread!;
+
+/** Whether the comment a reply answers is gone, other than into a conflict to be settled. */
+const missingParent = ({ comments, conflicts }: Loaded, c: StoredComment) => !comments.has(answered(c)) && !conflicts.has(answered(c));
+
 /** The replies under a comment, at any depth. */
 function answers(loaded: Loaded, id: string): string[] {
-  if (loaded.comments.get(id)?.anchor) return replies(loaded, id).map(([replyId]) => replyId);
-  return [...loaded.comments].filter(([, c]) => c.replyTo === id).flatMap(([replyId]) => [replyId, ...answers(loaded, replyId)]);
+  const direct = [...loaded.comments].filter(([, c]) => answered(c) === id || c.thread === id);
+  return [...new Set(direct.flatMap(([replyId]) => [replyId, ...answers(loaded, replyId)]))];
 }
 
 function replies({ comments }: Loaded, thread: string): [string, StoredComment][] {
@@ -472,6 +550,8 @@ function find({ comments }: Loaded, id: string): StoredComment {
   if (!comment) throw new Error("This comment no longer exists. It may have been deleted elsewhere.");
   return comment;
 }
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 const isOwn = (path: string) => path === COMMENTS_DIR || path.startsWith(`${COMMENTS_DIR}/`);
 

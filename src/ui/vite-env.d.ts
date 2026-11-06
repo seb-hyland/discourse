@@ -2,5 +2,8 @@
 
 /** From the Electron app's preload.cjs. */
 interface Window {
-  discourse: import("../shared/api.ts").Bridge;
+  discourse: {
+    invoke(channel: string, ...args: unknown[]): Promise<any>;
+    onChange: import("../shared/api.ts").Bridge["onChange"];
+  };
 }

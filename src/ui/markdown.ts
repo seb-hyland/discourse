@@ -1,17 +1,18 @@
 import GithubSlugger from "github-slugger";
 import type { Element, ElementContent, Root, RootContent } from "hast";
+import { LanguageDescription } from "@codemirror/language";
+import { languages } from "@codemirror/language-data";
+import { highlightTree } from "@lezer/highlight";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import { common, createLowlight } from "lowlight";
 import type { Code } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { toHast, type State } from "mdast-util-to-hast";
 import { gfm } from "micromark-extension-gfm";
-import type { ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import type { Span } from "../shared/api.ts";
-
-const lowlight = createLowlight(common);
+import { syntaxClasses } from "./syntax.ts";
 
 export interface RenderOptions {
   /** Wraps text in spans giving its source range (see `SourceIndex`), and gives headings ids. */
@@ -32,12 +33,45 @@ export function renderMarkdown(source: string, { sourceOffsets, imageUrl }: Rend
   return toJsxRuntime(hast, { Fragment, jsx, jsxs });
 }
 
+/** How many languages have loaded, for markdown to render again with their code highlighted. */
+let languagesLoaded = 0;
+const onLanguageLoad = new Set<() => void>();
+
+export function useLanguagesLoaded(): number {
+  return useSyncExternalStore(
+    (listener) => (onLanguageLoad.add(listener), () => onLanguageLoad.delete(listener)),
+    () => languagesLoaded,
+  );
+}
+
+/** `code` with spans for its syntax, or null until its language has loaded or if it's unknown. */
+function highlight(code: string, language: string): ElementContent[] | null {
+  const description = LanguageDescription.matchLanguageName(languages, language, true);
+  if (!description) return null;
+  if (!description.support) {
+    void description.load().then(() => {
+      languagesLoaded++;
+      onLanguageLoad.forEach((listener) => listener());
+    });
+    return null;
+  }
+  const children: ElementContent[] = [];
+  let at = 0;
+  const text = (to: number) => at < to && children.push({ type: "text", value: code.slice(at, to) });
+  highlightTree(description.support.language.parser.parse(code), syntaxClasses, (from, to, classes) => {
+    text(from);
+    children.push({ type: "element", tagName: "span", properties: { className: classes.split(" ") }, children: [{ type: "text", value: code.slice(from, to) }] });
+    at = to;
+  });
+  text(code.length);
+  return children;
+}
+
 /** Code blocks, highlighted when their language is known; others stay plain rather than guessed at. */
 function highlightedCode(state: State, node: Code, source: string): Element {
   const language = node.lang?.split(/\s/)[0];
-  const known = language && lowlight.registered(language);
-  const children = known ? (lowlight.highlight(language, node.value).children as ElementContent[]) : [{ type: "text" as const, value: node.value }];
-  const code: Element = { type: "element", tagName: "code", properties: known ? { className: [`hljs language-${language}`] } : {}, children };
+  const children = (language && highlight(node.value, language)) || [{ type: "text" as const, value: node.value }];
+  const code: Element = { type: "element", tagName: "code", properties: {}, children };
   const pre: Element = { type: "element", tagName: "pre", properties: {}, children: [code] };
   state.patch(node, pre);
   // The code's own range starts after a fence's opening line, so its text isn't looked for there.

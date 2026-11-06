@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
-import type { CommentUpdate, DocumentView as Doc, FileSummary, NewComment, Span } from "../shared/api.ts";
+import type { CommentUpdate, DocumentView as Doc, ErrorAction, FileSummary, NewComment, Span } from "../shared/api.ts";
 import { api } from "./api.ts";
 import { DocumentView, type DocumentHandle } from "./DocumentView.tsx";
 import { FileTree } from "./FileTree.tsx";
@@ -15,9 +15,21 @@ export interface Actions {
   remove(id: string): Promise<boolean>;
   resolveConflict(id: string, version: number): Promise<boolean>;
   restoreParent(replyId: string): Promise<boolean>;
+  restoreDocument(): Promise<boolean>;
   /** Opens the document in the user's editor, at the start of `span`. */
   openInEditor(span: Span): Promise<boolean>;
+  openCommentFile(file: string): Promise<boolean>;
 }
+
+/** A message floating over the document: an error, or news of something done, with a button to act on it. */
+interface Message {
+  text: string;
+  error?: boolean;
+  action?: { label: string; run: () => void };
+}
+
+/** How long a request may take before the window says it's loading. */
+const LOADING_DELAY_MS = 300;
 
 export function App() {
   const [files, setFiles] = useState<FileSummary[]>([]);
@@ -25,12 +37,15 @@ export function App() {
   const shown = useRef(doc);
   shown.current = doc;
   const [active, setActive] = useState<string | null>(null);
-  /** Text the user is writing a new comment on. */
   const [draft, setDraft] = useState<Span | null>(null);
   const [selection, setSelection] = useState<Span | null>(null);
   const documentView = useRef<DocumentHandle>(null);
-  const [error, setError] = useState<string | null>(null);
-  const report = (e: unknown) => setError((e as Error).message);
+  const [message, setMessage] = useState<Message | null>(null);
+  const report = (e: unknown) => {
+    const { message, action } = e as Error & { action?: ErrorAction };
+    setMessage({ text: message, error: true, action: action === "settings" ? { label: "Settings", run: () => void api.editSettings().catch(report) } : undefined });
+  };
+  const [loading, setLoading] = useState(false);
   /** A comment a followed link points to, to show once its document is open. */
   const [linked, setLinked] = useState<string | null>(null);
   const [filesWidth, setFilesWidth] = useStoredWidth("files", 240, [160, 480]);
@@ -43,6 +58,7 @@ export function App() {
   const latest = useRef(0);
   const show = async (path: string) => {
     const request = ++latest.current;
+    const slow = setTimeout(() => setLoading(true), LOADING_DELAY_MS);
     try {
       const next = path ? await api.document(path) : null;
       if (request !== latest.current) return;
@@ -56,6 +72,9 @@ export function App() {
       if (request !== latest.current) return;
       report(e);
       history.replaceState(null, "", hashOf(shown.current?.path ?? ""));
+    } finally {
+      clearTimeout(slow);
+      if (request === latest.current) setLoading(false);
     }
   };
 
@@ -86,14 +105,17 @@ export function App() {
 
   const open = (path: string) => (location.hash = hashOf(path));
 
+  /** Makes a change, showing what it returns. A failure is most likely from out of date state, so reloads. */
   const run = async (change: (path: string) => Promise<Doc | void>) => {
+    const path = doc!.path;
     try {
-      const next = await change(doc!.path);
+      const next = await change(path);
       if (next) setDoc(next);
-      setError(null);
+      setMessage(null);
       return true;
     } catch (e) {
       report(e);
+      void show(path);
       return false;
     }
   };
@@ -105,11 +127,28 @@ export function App() {
       return added;
     },
     update: (id, update) => run((path) => api.update(path, id, update)),
-    remove: (id) => run((path) => api.remove(path, id)),
+    remove: async (id) => {
+      const removed = await run((path) => api.remove(path, id));
+      if (removed) setMessage({ text: "Deleted.", action: { label: "Undo", run: () => void run((path) => api.undo(path, "undo")) } });
+      return removed;
+    },
     resolveConflict: (id, version) => run((path) => api.resolveConflict(path, id, version)),
     restoreParent: (replyId) => run((path) => api.restoreParent(path, replyId)),
-    openInEditor: (span) => run((path) => api.openInEditor(path, span.from)),
+    restoreDocument: () => run((path) => api.restoreDocument(path)),
+    openInEditor: (span) =>
+      run((path) => {
+        const before = doc!.text.slice(0, span.from);
+        return api.openInEditor(path, before.split("\n").length, before.length - before.lastIndexOf("\n"));
+      }),
+    openCommentFile: (file) => run(() => api.openCommentFile(file)),
   };
+
+  // News of something done goes away by itself; errors wait to be dismissed.
+  useEffect(() => {
+    if (!message || message.error) return;
+    const timer = setTimeout(() => setMessage(null), 6000);
+    return () => clearTimeout(timer);
+  }, [message]);
 
   // A mouse's back and forward buttons go back and forward through the files and comments opened.
   useEffect(() => {
@@ -126,7 +165,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!doc || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z" || isTyping(e.target)) return;
       e.preventDefault();
-      void run((path) => api.undo(path, e.shiftKey));
+      void run((path) => api.undo(path, e.shiftKey ? "redo" : "undo"));
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -178,17 +217,20 @@ export function App() {
       <FileTree files={files} current={doc?.path ?? ""} onOpen={open} onSettings={() => api.editSettings().catch(report)} />
       <ResizeHandle panel="files" width={filesWidth} onResize={setFilesWidth} />
       <main>
+        {!doc && loading && <p className="loading">Loading…</p>}
         {doc && (
           <DocumentView
             key={doc.path}
             ref={documentView}
             doc={doc}
+            loading={loading}
             active={active}
             draft={draft}
             selection={selection}
             onActivate={setActive}
             onSelect={setSelection}
             onOpenInEditor={actions.openInEditor}
+            onRestore={actions.restoreDocument}
             onComment={(span) => {
               setDraft(span);
               setSelection(null);
@@ -214,10 +256,20 @@ export function App() {
           actions={actions}
         />
       )}
-      {error && (
-        <div className="error-popup" role="alert">
-          <p>{error}</p>
-          <IconButton tip="Dismiss" onClick={() => setError(null)}>
+      {message && (
+        <div className={message.error ? "popup error" : "popup"} role={message.error ? "alert" : "status"}>
+          <p>{message.text}</p>
+          {message.action && (
+            <button
+              onClick={() => {
+                message.action!.run();
+                setMessage(null);
+              }}
+            >
+              {message.action.label}
+            </button>
+          )}
+          <IconButton tip="Dismiss" onClick={() => setMessage(null)}>
             <CloseIcon />
           </IconButton>
         </div>

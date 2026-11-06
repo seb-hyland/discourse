@@ -104,29 +104,51 @@ button {
   border-radius: 10px;
 }
 
-/* Errors float over the bottom of the document until dismissed. */
-.error-popup {
+/* Errors, and news of something done, float over the bottom of the document. */
+.popup {
   position: fixed;
   z-index: 10;
   bottom: 1.25rem;
   left: 50%;
   translate: -50%;
   display: flex;
-  align-items: start;
+  align-items: center;
   gap: 0.5rem;
   max-width: min(36rem, 90vw);
-  padding: 0.6rem 0.6rem 0.6rem 1rem;
-  border: 1.5px solid var(--error);
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  border: 1.5px solid var(--border-active);
   border-radius: 10px;
   background: var(--bg);
   box-shadow: 0 4px 12px var(--shadow);
-  color: var(--error);
   font-size: 14px;
 }
 
-.error-popup p {
-  margin: 0.1rem 0;
+.popup.error {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.popup p {
+  margin: 0;
   white-space: pre-line;
+}
+
+.popup > button:not(.icon) {
+  flex-shrink: 0;
+  padding: 0.2rem 0.7rem;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+}
+
+.popup > button:not(.icon):hover {
+  background: var(--hover);
+}
+
+main > .loading {
+  margin: 2rem;
+  color: var(--text-muted);
 }
 
 /* Files */
@@ -389,6 +411,10 @@ main:has(.code) .document-header {
   color: var(--text-muted);
 }
 
+.document-header .loading {
+  color: var(--text-faint);
+}
+
 .selection-actions {
   position: absolute;
   z-index: 1;
@@ -547,7 +573,17 @@ main:has(.code) .document-header {
   border-color: var(--error);
 }
 
-.thread .version + .version {
+.thread .side {
+  margin: 0 0 0.25rem;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.thread.problems .actions {
+  margin-bottom: 0.25rem;
+}
+
+.thread .version {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
@@ -674,7 +710,7 @@ main:has(.code) .document-header {
   overflow: hidden;
 }
 
-.comment button.more {
+button.more {
   border: 0;
   background: none;
   padding: 0.1rem 0.35rem;
@@ -683,7 +719,7 @@ main:has(.code) .document-header {
   font-size: 12px;
 }
 
-.comment button.more:hover {
+button.more:hover {
   background: var(--hover);
   color: var(--text);
 }

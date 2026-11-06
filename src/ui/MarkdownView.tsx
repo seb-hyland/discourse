@@ -1,5 +1,5 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
-import { renderMarkdown, SourceIndex } from "./markdown.ts";
+import { renderMarkdown, SourceIndex, useLanguagesLoaded } from "./markdown.ts";
 import type { TextViewProps } from "./textView.ts";
 
 /** Highlight names (see `::highlight()` in styles.css), lowest priority first. */
@@ -12,7 +12,8 @@ const folder = new URLSearchParams(location.search).get("folder");
 export function MarkdownView({ path, text, highlights, ref }: TextViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const index = useRef<SourceIndex>(null);
-  const content = useMemo(() => renderMarkdown(text, { sourceOffsets: true, imageUrl: (src) => imageUrl(path, src) }), [path, text]);
+  const languages = useLanguagesLoaded();
+  const content = useMemo(() => renderMarkdown(text, { sourceOffsets: true, imageUrl: (src) => imageUrl(path, src) }), [path, text, languages]);
   useLayoutEffect(() => {
     index.current = new SourceIndex(host.current!, text);
   }, [content]);

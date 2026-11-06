@@ -117,7 +117,7 @@ test("unreadable comment files are reported, not dropped silently", async () => 
   await writeFile(join(ws.root, ".comments", "a.md", "x.json"), '<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n');
   const { threads, problems } = await ws.view("a.md");
   assert.equal(threads.length, 1);
-  assert.match(problems[0], /x\.json has merge conflict markers/);
+  assert.deepEqual(problems, [{ file: ".comments/a.md/x.json", message: "has merge conflict markers." }]);
   assert.equal((await ws.files()).find((f) => f.path === "a.md")?.attention, true);
 });
 
@@ -245,4 +245,104 @@ test("a reply to a reply deleted elsewhere waits for the user, and can bring bac
   await ws.restoreParent("a.md", c);
   const restored = await ws.view("a.md");
   assert.deepEqual([restored.orphans, restored.threads[0].comments.map((x) => x.text).sort()], [[], ["a", "b", "c", "d", "first"]]);
+});
+
+test("a thread on text unchanged since it was pushed is placed on the pushed version", async () => {
+  const ws = await workspace("Some pushed text.\n", { pushed: true });
+  await edit(ws, "Intro.\nSome pushed text.\n");
+  await ws.add("a.md", { text: "c", span: { from: 12, to: 18 } });
+  const [file] = await commentFiles(ws);
+  const { anchor } = JSON.parse(await readFile(join(ws.root, ".comments", "a.md", file), "utf8"));
+  assert.deepEqual([anchor.from, anchor.to, anchor.quote], [5, 11, "pushed"]);
+  assert.deepEqual(await placed(ws), ["pushed"]);
+});
+
+test("a thread whose text now differs too much is shown as maybe moved, not on the wrong text", async () => {
+  const ws = await workspace("I like red apples.\n", { pushed: true });
+  await ws.add("a.md", { text: "c", span: { from: 7, to: 17 } });
+  await edit(ws, "I like red bananas, cherries and grapes from the market.\n");
+  const [thread] = (await ws.view("a.md")).threads;
+  assert.deepEqual([thread.span, thread.lost], [null, "moved"]);
+});
+
+test("a deleted document's threads say so, and the document can be restored", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "c", span: { from: 0, to: 4 } });
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "a");
+  git(ws.root, "rm", "-q", "a.md");
+  git(ws.root, "commit", "-q", "-m", "rm");
+  assert.equal((await ws.view("a.md")).threads[0].lost, "deleted");
+  await ws.restoreDocument("a.md");
+  assert.deepEqual(await placed(ws), ["text"]);
+});
+
+test("anchors both sides moved to the same place merge without asking", async () => {
+  const ws = await workspace("Alpha beta.\n\nDelta epsilon.\n");
+  await ws.add("a.md", { text: "c", span: { from: 13, to: 18 } });
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "base");
+  git(ws.root, "checkout", "-q", "-b", "b");
+  await edit(ws, "Alpha beta.\n\nDelta epsilon. More.\n");
+  await ws.view("a.md");
+  git(ws.root, "commit", "-q", "-am", "b");
+  git(ws.root, "checkout", "-q", "main");
+  await edit(ws, "Intro.\n\nAlpha beta.\n\nDelta epsilon.\n");
+  await ws.view("a.md");
+  git(ws.root, "commit", "-q", "-am", "a");
+  assert.throws(() => git(ws.root, "merge", "-q", "b"));
+  const merged = await ws.view("a.md");
+  assert.deepEqual([merged.conflicts, await placed(ws)], [[], ["Delta"]]);
+});
+
+test("conflict versions are labelled with their side", async () => {
+  const ws = await workspace("Hello world.\n");
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 5 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "base");
+  git(ws.root, "checkout", "-q", "-b", "mine");
+  await ws.update("a.md", id, { text: "mine" });
+  git(ws.root, "commit", "-q", "-am", "my edit");
+  git(ws.root, "checkout", "-q", "main");
+  await ws.update("a.md", id, { text: "theirs" });
+  git(ws.root, "commit", "-q", "-am", "their edit");
+  git(ws.root, "checkout", "-q", "mine");
+  assert.throws(() => git(ws.root, "rebase", "-q", "main"));
+  const [conflict] = (await ws.view("a.md")).conflicts;
+  assert.deepEqual(
+    conflict.versions.map((v, i) => [conflict.sides[i].label, v?.text, conflict.sides[i].commit?.subject]),
+    [["Upstream", "theirs", "their edit"], ["Your commit", "mine", "my edit"]],
+  );
+});
+
+test("keeping a deleted thread deleted deletes the replies added to it elsewhere", async () => {
+  const ws = await workspace("Hello world.\n");
+  await ws.add("a.md", { text: "first", span: { from: 0, to: 5 } });
+  const [{ id }] = (await ws.view("a.md")).threads;
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "base");
+  git(ws.root, "checkout", "-q", "-b", "b");
+  await ws.update("a.md", id, { resolved: true });
+  await ws.add("a.md", { replyTo: id, text: "reply" });
+  git(ws.root, "add", ".");
+  git(ws.root, "commit", "-q", "-m", "b");
+  git(ws.root, "checkout", "-q", "main");
+  await ws.remove("a.md", id);
+  git(ws.root, "commit", "-q", "-am", "delete");
+  assert.throws(() => git(ws.root, "merge", "-q", "b"));
+  const [conflict] = (await ws.view("a.md")).conflicts;
+  assert.equal(conflict.replies, 1);
+  await ws.resolveConflict("a.md", id, conflict.versions.indexOf(null));
+  const after = await ws.view("a.md");
+  assert.deepEqual([after.threads, after.orphans, after.conflicts], [[], [], []]);
+});
+
+test("editing a comment's date keeps its time of day and offset", async () => {
+  const ws = await workspace("text\n");
+  await ws.add("a.md", { text: "c", span: { from: 0, to: 4 } });
+  const [{ id, comments }] = (await ws.view("a.md")).threads;
+  await ws.update("a.md", id, { date: "2020-02-03" });
+  const [{ comments: [edited] }] = (await ws.view("a.md")).threads;
+  assert.equal(edited.timestamp, "2020-02-03" + comments[0].timestamp.slice(10));
 });

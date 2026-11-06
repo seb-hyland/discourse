@@ -22,7 +22,6 @@
     "diff": "^9.0.0",
     "github-slugger": "^2.0.0",
     "hast-util-to-jsx-runtime": "^2.3.7",
-    "lowlight": "^3.3.0",
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-gfm": "^3.1.0",
     "mdast-util-to-hast": "^13.2.1",

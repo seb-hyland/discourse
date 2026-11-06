@@ -8,7 +8,6 @@ export function ResizeHandle({ panel, width, onResize }: {
 }) {
   const startDrag = (down: ReactPointerEvent) => {
     down.preventDefault();
-    // The file panel grows to the right; the comment panel, on the other side, to the left.
     const direction = panel === "files" ? 1 : -1;
     const move = (e: PointerEvent) => onResize(width + direction * (e.clientX - down.clientX));
     const stop = () => {

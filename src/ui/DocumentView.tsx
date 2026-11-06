@@ -1,4 +1,4 @@
-import { useImperativeHandle, useMemo, useRef, useState, type MouseEvent, type Ref } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent, type Ref } from "react";
 import type { DocumentView as Doc, Span } from "../shared/api.ts";
 import { CodeView } from "./CodeView.tsx";
 import { MarkdownView } from "./MarkdownView.tsx";
@@ -9,8 +9,10 @@ export interface DocumentHandle {
   reveal(span: Span): void;
 }
 
-export function DocumentView({ doc, active, draft, selection, onActivate, onSelect, onComment, onOpenInEditor, ref }: {
+export function DocumentView({ doc, loading, active, draft, selection, onActivate, onSelect, onComment, onOpenInEditor, onRestore, ref }: {
   doc: Doc;
+  /** A newer version of the document is on its way. */
+  loading: boolean;
   active: string | null;
   draft: Span | null;
   selection: Span | null;
@@ -18,6 +20,7 @@ export function DocumentView({ doc, active, draft, selection, onActivate, onSele
   onSelect: (span: Span | null) => void;
   onComment: (span: Span) => void;
   onOpenInEditor: (span: Span) => void;
+  onRestore: () => void;
   ref: Ref<DocumentHandle>;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -50,11 +53,27 @@ export function DocumentView({ doc, active, draft, selection, onActivate, onSele
     },
   }));
 
-  const onMouseUp = (e: MouseEvent) => {
+  const updateSelection = () => {
     const span = view.current?.selection() ?? null;
     onSelect(span);
     setAnchor((span && position(span.from)) ?? null);
-    if (span) return;
+    return span;
+  };
+
+  // Selections made with the keyboard; those made with the mouse are taken when it's released.
+  // Clicking elsewhere, say on Move to selection, doesn't count.
+  const dragging = useRef(false);
+  useEffect(() => {
+    const onSelectionChange = () => {
+      if (!dragging.current && container.current?.contains(getSelection()?.anchorNode ?? null)) updateSelection();
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  });
+
+  const onMouseUp = (e: MouseEvent) => {
+    dragging.current = false;
+    if (updateSelection()) return;
 
     const offset = view.current?.offsetAt(e.clientX, e.clientY);
     if (offset == null) return;
@@ -77,12 +96,18 @@ export function DocumentView({ doc, active, draft, selection, onActivate, onSele
       <header className="document-header">
         <h1>
           {doc.path}
+          {loading && <span className="loading"> · loading…</span>}
           <span className="progress" style={{ width: `${progress * 100}%` }} />
         </h1>
       </header>
-      <div className="document" ref={container} onMouseUp={onMouseUp} onScroll={onScroll}>
+      <div className="document" ref={container} onMouseDown={() => (dragging.current = true)} onMouseUp={onMouseUp} onScroll={onScroll}>
         {doc.missing ? (
-          <p className="missing-document">This file has been deleted. Its comments are still here, to read or delete.</p>
+          <div className="missing-document">
+            <p>This file has been deleted. Its comments are still here, to read or delete.</p>
+            <div className="actions">
+              <button onClick={onRestore}>Restore file</button>
+            </div>
+          </div>
         ) : (
           <TextView path={doc.path} text={doc.text} highlights={highlights} ref={view} />
         )}

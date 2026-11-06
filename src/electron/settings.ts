@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { app } from "electron";
+import { SettingsError } from "../workspace/editor.ts";
 
 interface Settings {
   /** The command for opening files in an editor (see `openInEditor`). */
@@ -17,10 +18,11 @@ export async function settingsFile(): Promise<string> {
 
 /** The settings, read afresh each time so edits apply straight away. */
 export async function settings(): Promise<Settings> {
-  const file = await settingsFile();
+  const text = await readFile(await settingsFile(), "utf8");
   try {
-    return JSON.parse(await readFile(file, "utf8"));
+    return JSON.parse(text);
   } catch (e) {
-    throw new Error(`Settings (${file}) aren't valid JSON: ${(e as Error).message}`);
+    const line = (e as Error).message.match(/line (\d+)/)?.[1];
+    throw new SettingsError(`Settings have a mistake${line ? ` on line ${line}` : ""}, so they can't be read.`);
   }
 }

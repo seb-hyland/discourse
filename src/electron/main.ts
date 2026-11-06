@@ -1,15 +1,18 @@
 import { existsSync, realpathSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, net, protocol, shell, type MenuItemConstructorOptions } from "electron";
 import type { ViteDevServer } from "vite";
 import type { CommentUpdate, NewComment } from "../shared/api.ts";
-import { openInEditor } from "../workspace/editor.ts";
+import { openInEditor, type SettingsError } from "../workspace/editor.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { describe, recentFolders, rememberFolder } from "./recents.ts";
 import { settings, settingsFile } from "./settings.ts";
 
 const BACKGROUND = "#fff5ed";
+
+/** Files a link may open in their default app; anything else linked to is only shown in its folder. */
+const OPENABLE = new Set([".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".bmp"]);
 
 interface Folder {
   root: string;
@@ -45,11 +48,12 @@ async function openFolder(root: string) {
     webPreferences: { preload: join(import.meta.dirname, "preload.cjs") },
   });
   folders.set(id, { root, window, workspace });
-  const stopWatching = workspace.watch((change) => window.webContents.send("change", change));
+  const stopWatching = workspace.watch((change) => window.isDestroyed() || window.webContents.send("change", change));
+  void workspace.repinAll();
   window.on("page-title-updated", (e) => e.preventDefault());
   window.on("closed", () => {
     folders.delete(id);
-    void stopWatching();
+    void stopWatching.then((stop) => stop());
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(https?|mailto):/.test(url)) void shell.openExternal(url);
@@ -63,8 +67,8 @@ async function openFolder(root: string) {
 }
 
 /**
- * Answers `channel` from the preload script with `{ value }` or `{ error }`, as Electron would
- * otherwise prefix error messages with its own. `run` gets the sender's folder, if it has one.
+ * Answers `channel` from the preload script with `{ value }` or `{ error, action }`, as Electron
+ * would otherwise prefix error messages with its own. `run` gets the sender's folder, if it has one.
  */
 function handle(channel: string, run: (folder: Folder, ...args: any[]) => unknown) {
   ipcMain.handle(channel, async (e, ...args) => {
@@ -72,7 +76,7 @@ function handle(channel: string, run: (folder: Folder, ...args: any[]) => unknow
     try {
       return { value: await run(folder!, ...args) };
     } catch (err) {
-      return { error: (err as Error).message };
+      return { error: (err as Error).message, action: (err as SettingsError).action };
     }
   });
 }
@@ -90,16 +94,20 @@ handle("document", ({ workspace }, path: string) => workspace.view(path));
 handleChange("add", (w, path, comment: NewComment) => w.add(path, comment));
 handleChange("update", (w, path, id: string, update: CommentUpdate) => w.update(path, id, update));
 handleChange("remove", (w, path, id: string) => w.remove(path, id));
-handleChange("undo", (w, path, redo: boolean) => w.undo(path, redo ? "redo" : "undo"));
+handleChange("undo", (w, path, direction: "undo" | "redo") => w.undo(path, direction));
 handleChange("resolveConflict", (w, path, id: string, version: number) => w.resolveConflict(path, id, version));
 handleChange("restoreParent", (w, path, replyId: string) => w.restoreParent(path, replyId));
-handle("openInEditor", async ({ workspace }, path: string, offset: number) => {
-  const { line, column } = await workspace.position(path, offset);
+handleChange("restoreDocument", (w, path) => w.restoreDocument(path));
+handle("openInEditor", async ({ workspace }, path: string, line: number, column: number) => {
   await openInEditor((await settings()).editor, workspace.documentPath(path), line, column);
+});
+handle("openCommentFile", async ({ workspace }, file: string) => {
+  await openInEditor((await settings()).editor, workspace.commentFilePath(file), 1, 1);
 });
 handle("openFile", async ({ workspace }, path: string) => {
   const file = workspace.documentPath(path);
   if (!existsSync(file)) throw new Error(`${path} doesn't exist.`);
+  if (!OPENABLE.has(extname(file).toLowerCase())) return shell.showItemInFolder(file);
   const failure = await shell.openPath(file);
   if (failure) throw new Error(`Couldn't open ${path}: ${failure}`);
 });
@@ -210,6 +218,8 @@ void app.whenReady().then(async () => {
   const argument = process.argv
     .slice(1)
     .find((arg) => !arg.startsWith("-") && ![app.getAppPath(), import.meta.filename].includes(resolve(arg)));
-  if (argument) await openFolder(realpathSync(resolve(argument)));
+  const root = argument && existsSync(argument) ? realpathSync(resolve(argument)) : null;
+  if (argument && !root) dialog.showErrorBox(`Can't open ${argument}`, "There's no such folder.");
+  if (root) await openFolder(root);
   else showStart();
 });

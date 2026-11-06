@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
+import type { ErrorAction } from "../shared/api.ts";
 
-const SETUP = `In Settings (⌘,), set "editor" to a command such as ["code", "--goto", "{file}:{line}:{column}"].`;
+/** An error the user can fix in Settings, which the app offers to open beside it. */
+export class SettingsError extends Error {
+  readonly action: ErrorAction = "settings";
+}
 
 /** How long a command may fail in before it's taken to have opened the editor, which may keep running. */
 const STARTUP_MS = 1500;
@@ -10,16 +14,17 @@ const STARTUP_MS = 1500;
  * filled in) on its own, failing if it can't be run or exits with an error straight away.
  */
 export function openInEditor(command: string[] | null | undefined, file: string, line: number, column: number): Promise<void> {
-  if (!Array.isArray(command) || command.length === 0) return Promise.reject(new Error(`No editor is set up. ${SETUP}`));
+  if (!Array.isArray(command) || command.length === 0) return Promise.reject(new SettingsError("No editor is set up yet."));
   const values: Record<string, string> = { file, line: String(line), column: String(column) };
   const [program, ...args] = command.map((word) => String(word).replace(/\{(file|line|column)\}/g, (_, key) => values[key]));
   return new Promise((opened, failed) => {
     const child = spawn(program, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    const fail = (why: string) => failed(new Error(`Couldn't open the editor: ${why.replace(/\.$/, "")}.`));
-    child.on("error", (e) => fail((e as NodeJS.ErrnoException).code === "ENOENT" ? `there's no program "${program}". ${SETUP}` : e.message));
-    child.on("exit", (code) => (code ? fail(stderr.trim() || `"${program}" exited with code ${code}`) : opened()));
+    child.on("error", (e) =>
+      failed((e as NodeJS.ErrnoException).code === "ENOENT" ? new SettingsError(`There's no program "${program}" to open the editor with.`) : e),
+    );
+    child.on("exit", (code) => code && failed(new SettingsError(`The editor failed: ${stderr.trim() || `"${program}" exited with code ${code}`}`)));
     setTimeout(() => {
       child.stderr.destroy();
       child.unref();

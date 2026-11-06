@@ -29,10 +29,14 @@ export function CodeView({ path, text, highlights, ref }: TextViewProps) {
       }),
     });
     view.current = editor;
+    let destroyed = false;
     void LanguageDescription.matchFilename(languages, path)
       ?.load()
-      .then((support) => editor.dispatch({ effects: language.reconfigure(support) }));
-    return () => editor.destroy();
+      .then((support) => destroyed || editor.dispatch({ effects: language.reconfigure(support) }));
+    return () => {
+      destroyed = true;
+      editor.destroy();
+    };
   }, [path]);
 
   useEffect(() => {

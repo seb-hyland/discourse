@@ -111,24 +111,15 @@
   --crepe-shadow-2: 0 4px 12px var(--shadow);
 }
 
-/*
- * Syntax classes: `syn-*` from CodeMirror (see syntax.ts), `hljs-*` from highlight.js in markdown
- * code blocks.
- */
-.syn-comment,
-.hljs-comment,
-.hljs-quote {
+/* Syntax classes, from lezer's highlighting (see syntax.ts) in code views and markdown code blocks. */
+.syn-comment {
   color: var(--syntax-comment);
   font-style: oblique;
 }
 
 .syn-keyword,
-.hljs-keyword,
-.hljs-selector-tag,
 .syn-heading,
-.hljs-section,
-.syn-strong,
-.hljs-strong {
+.syn-strong {
   font-weight: 700;
 }
 
@@ -137,14 +128,11 @@
   font-weight: 100;
 }
 
-.syn-operator,
-.hljs-operator {
+.syn-operator {
   font-weight: 500;
 }
 
-.syn-type,
-.hljs-type,
-.hljs-title.class_ {
+.syn-type {
   color: var(--syntax-type);
 }
 
@@ -154,82 +142,62 @@
 }
 
 .syn-function,
-.hljs-title.function_,
-.syn-tag,
-.hljs-tag .hljs-name {
+.syn-tag {
   font-weight: 600;
 }
 
-.syn-builtin,
-.hljs-built_in,
-.hljs-variable.language_ {
+.syn-builtin {
   font-style: italic;
   font-weight: 600;
 }
 
-.syn-property,
-.hljs-property,
-.hljs-attr,
-.hljs-params {
+.syn-property {
   font-style: italic;
 }
 
-.syn-constant,
-.hljs-variable.constant_,
-.hljs-symbol {
+.syn-constant {
   color: var(--syntax-constant);
   font-weight: 600;
 }
 
-.syn-string,
-.hljs-string,
-.hljs-regexp {
+.syn-string {
   color: var(--syntax-string);
 }
 
-.syn-escape,
-.hljs-char.escape_,
-.hljs-subst {
+.syn-escape {
   color: var(--syntax-escape);
   font-weight: 700;
 }
 
-.syn-number,
-.hljs-number {
+.syn-number {
   color: var(--syntax-number);
   font-weight: 600;
 }
 
-.syn-boolean,
-.hljs-literal {
+.syn-boolean {
   color: var(--syntax-number);
   font-style: italic;
   font-weight: 600;
 }
 
-.syn-meta,
-.hljs-meta {
+.syn-meta {
   font-style: italic;
   font-weight: 200;
 }
 
-.syn-link,
-.hljs-link {
+.syn-link {
   color: var(--syntax-link);
 }
 
-.syn-emphasis,
-.hljs-emphasis {
+.syn-emphasis {
   font-style: oblique;
 }
 
-.syn-inserted,
-.hljs-addition {
+.syn-inserted {
   color: var(--syntax-inserted);
 }
 
 .syn-deleted,
-.syn-invalid,
-.hljs-deletion {
+.syn-invalid {
   color: var(--syntax-deleted);
 }
