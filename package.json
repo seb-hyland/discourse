@@ -7,7 +7,7 @@
     "test": "node --test 'src/**/*.test.ts'",
     "app": "electron .",
     "check": "tsc",
-    "package": "vite build && electron-packager . --out=out --overwrite --ignore='^/(out|src/ui)($|/)'"
+    "package": "vite build && electron-packager . --out=out --overwrite --icon=icon/Discourse.icns --ignore='^/(out|src/ui|icon|\\.jj|audits)($|/)'"
   },
   "type": "module",
   "dependencies": {

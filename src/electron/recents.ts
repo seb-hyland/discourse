@@ -3,15 +3,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { app } from "electron";
+import type { Recent } from "../shared/api.ts";
 
 const MAX_RECENTS = 10;
-
-export interface Recent {
-  root: string;
-  name: string;
-  /** The folder it's in, with the home folder as `~`. */
-  location: string;
-}
 
 const file = () => join(app.getPath("userData"), "recent-folders.json");
 

@@ -59,9 +59,7 @@ async function openFolder(root: string) {
     if (/^(https?|mailto):/.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
-  await (vite
-    ? window.loadURL(`${vite.resolvedUrls!.local[0]}?folder=${id}`)
-    : window.loadFile(join(import.meta.dirname, "../../dist/index.html"), { query: { folder: id } }));
+  await load(window, id);
   await rememberFolder(root);
   start?.close();
 }
@@ -124,6 +122,14 @@ async function chooseFolder() {
   if (!canceled) await openFolder(realpathSync(filePaths[0]));
 }
 
+/** Loads the UI: a folder's, by its id, or without one the start window's. */
+function load(window: BrowserWindow, folder?: string) {
+  const query: Record<string, string> = folder ? { folder } : {};
+  return vite
+    ? window.loadURL(`${vite.resolvedUrls!.local[0]}?${new URLSearchParams(query)}`)
+    : window.loadFile(join(import.meta.dirname, "../../dist/index.html"), { query });
+}
+
 function showStart() {
   if (start) return start.focus();
   start = new BrowserWindow({
@@ -134,7 +140,7 @@ function showStart() {
     webPreferences: { preload: join(import.meta.dirname, "preload.cjs") },
   });
   start.on("closed", () => (start = null));
-  void start.loadFile(join(import.meta.dirname, "start.html"));
+  void load(start);
 }
 
 /** Goes back or forward through the files and comments opened in the focused window. */

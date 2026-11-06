@@ -106,7 +106,15 @@ export interface Change {
 /** Something the user can do about an error, offered beside it. */
 export type ErrorAction = "settings";
 
-/** What the main process does for a folder's window (see `handle` in main.ts). */
+/** A recently opened folder. */
+export interface Recent {
+  root: string;
+  name: string;
+  /** The folder it's in, with the home folder as `~`. */
+  location: string;
+}
+
+/** What the main process does for a window (see `handle` in main.ts). */
 export interface Bridge {
   files(): Promise<FileSummary[]>;
   document(path: string): Promise<DocumentView>;
@@ -126,5 +134,10 @@ export interface Bridge {
   /** Opens a file the app can't show, like a PDF, in its default app; anything else is shown in its folder. */
   openFile(path: string): Promise<void>;
   editSettings(): Promise<void>;
+  recents(): Promise<Recent[]>;
+  /** Opens one of `recents` in its own window. */
+  open(root: string): Promise<void>;
+  /** Asks for a folder to open. */
+  choose(): Promise<void>;
   onChange(listener: (change: Change) => void): () => void;
 }
