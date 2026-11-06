@@ -51,6 +51,8 @@ async function openFolder(root: string) {
     const stopWatching = workspace.watch((change) => window.isDestroyed() || window.webContents.send("change", change));
     void workspace.repinAll();
     window.on("page-title-updated", (e) => e.preventDefault());
+    // A three-finger swipe, where the trackpad is set up for it (two-finger ones are seen by the window).
+    window.on("swipe", (_, direction) => (direction === "left" ? go("back") : direction === "right" ? go("forward") : undefined));
     window.on("closed", () => {
         folders.delete(id);
         void stopWatching.then((stop) => stop());
@@ -163,14 +165,23 @@ function go(direction: "back" | "forward") {
     if (direction === "forward" && history?.canGoForward()) history.goForward();
 }
 
-/** Opens the settings file in the editor it sets, or the file's default app if that doesn't work. */
+/**
+ * Opens the settings file in the editor it sets, or the file's default app if that doesn't work,
+ * failing with where the file is if neither can open it.
+ */
 async function editSettings() {
     const file = await settingsFile();
     try {
         await openInEditor((await settings()).editor, file, 1, 1);
     } catch {
-        await shell.openPath(file);
+        const failure = await shell.openPath(file);
+        if (failure) throw new Error(`Couldn't open the settings, which are in ${file}`);
     }
+}
+
+/** Opens the settings from the menu, where there's no window to say why it couldn't. */
+function editSettingsFromMenu() {
+    editSettings().catch((e) => dialog.showErrorBox("Can't open settings", (e as Error).message));
 }
 
 const appMenu: MenuItemConstructorOptions = {
@@ -178,7 +189,7 @@ const appMenu: MenuItemConstructorOptions = {
     submenu: [
         { role: "about" },
         { type: "separator" },
-        { label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => void editSettings() },
+        { label: "Settings…", accelerator: "CmdOrCtrl+,", click: editSettingsFromMenu },
         { type: "separator" },
         { role: "services" },
         { type: "separator" },

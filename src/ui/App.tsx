@@ -7,6 +7,7 @@ import { CloseIcon, IconButton } from "./icons.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 import { ThreadPanel } from "./ThreadPanel.tsx";
 import { Tooltip } from "./Tooltip.tsx";
+import { onSwipe } from "./swipe.ts";
 
 /** Changes to the open document's comments. Each resolves to whether it worked; failures are shown. */
 export interface Actions {
@@ -163,6 +164,9 @@ export function App() {
         addEventListener("mouseup", onMouseUp);
         return () => removeEventListener("mouseup", onMouseUp);
     }, []);
+
+    // A two-finger swipe sideways on a trackpad does the same, unless it's scrolling something sideways.
+    useEffect(() => onSwipe((direction) => (direction === "back" ? history.back() : history.forward())), []);
 
     // ⌘Z and ⇧⌘Z undo and redo changes to comments, except while typing, where they're the typing's own.
     useEffect(() => {
