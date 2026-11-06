@@ -1,70 +1,57 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { DocumentThreads, ThreadSummary } from "../shared/api.ts";
 import { api } from "./api.ts";
 import { useScrollProgress } from "./scrollProgress.ts";
-import { CheckAllIcon, CheckIcon, ChevronIcon, IconButton, UnreadIcon } from "./icons.tsx";
+import { AttentionIcon, CheckAllIcon, CheckIcon, ChevronIcon, IconButton, UnreadIcon } from "./icons.tsx";
 import { CommentBody } from "./ThreadPanel.tsx";
-
-/** The threads last listed, shown straight away when the list comes back, until they're refreshed. */
-let lastListed: DocumentThreads[] | null = null;
-
-/** Where whether resolved threads are listed is remembered between visits. */
-const SHOW_RESOLVED = "allThreads.showResolved";
-/** And whether only threads with unread comments are. */
-const UNREAD_ONLY = "allThreads.unreadOnly";
+import { classes, useStored } from "./util.ts";
 
 /**
- * Every thread in the folder, by document, for when no document is open. Choosing one opens its
- * document at it.
+ * Every thread in the folder, by document, for when no document is open, with what else needs
+ * attention. Choosing one opens its document at it.
  */
 export function AllThreads({
     version,
+    documents,
+    onList,
     onOpenThread,
     onOpenFile,
-    onAllRead,
+    onMarkAllRead,
     onError,
 }: {
     /** Changes whenever files change on disk, to list them again. */
     version: number;
+    /** The threads as last listed, if they have been. */
+    documents: DocumentThreads[] | null;
+    onList: (documents: DocumentThreads[]) => void;
     onOpenThread: (path: string, id: string) => void;
     onOpenFile: (path: string) => void;
-    /** Every comment has been marked read. */
-    onAllRead: () => void;
+    onMarkAllRead: () => void;
     onError: (e: unknown) => void;
 }) {
-    const [documents, setDocuments] = useState(lastListed);
     const [progress, onScroll] = useScrollProgress();
-    const [showResolved, setShowResolved] = useState(() => localStorage.getItem(SHOW_RESOLVED) !== "false");
-    const toggleResolved = () => {
-        localStorage.setItem(SHOW_RESOLVED, String(!showResolved));
-        setShowResolved(!showResolved);
-    };
-    const [unreadOnly, setUnreadOnly] = useState(() => localStorage.getItem(UNREAD_ONLY) === "true");
-    const toggleUnreadOnly = () => {
-        localStorage.setItem(UNREAD_ONLY, String(!unreadOnly));
-        setUnreadOnly(!unreadOnly);
-    };
-    const markAllRead = () =>
-        api.markAllSeen().then((d) => {
-            lastListed = d;
-            setDocuments(d);
-            onAllRead();
-        }, onError);
+    const [showResolved, setShowResolved] = useStored("allThreads.showResolved", true);
+    const [unreadOnly, setUnreadOnly] = useStored("allThreads.unreadOnly", false);
+    const [attentionOnly, setAttentionOnly] = useStored("allThreads.attentionOnly", false);
     useEffect(() => {
         let current = true;
-        api.allThreads().then((d) => {
-            lastListed = d;
-            if (current) setDocuments(d);
-        }, onError);
+        api.allThreads().then((d) => current && onList(d), onError);
         return () => void (current = false);
     }, [version]);
 
     const threads = documents?.flatMap((d) => d.threads) ?? [];
     const open = threads.filter((t) => !t.resolved).length;
     const unread = threads.reduce((n, t) => n + (t.unseen ?? 0), 0);
+    const attention = threads.some((t) => t.attention) || documents?.some((d) => d.issues.length > 0);
     const shown = (documents ?? [])
-        .map((d) => ({ ...d, threads: d.threads.filter((t) => (showResolved || !t.resolved) && (!unreadOnly || t.unseen)) }))
-        .filter((d) => d.threads.length > 0);
+        .map((d) => ({
+            ...d,
+            threads: d.threads.filter((t) => (showResolved || !t.resolved) && (!unreadOnly || t.unseen) && (!attentionOnly || t.attention)),
+            // Not threads, so never unread.
+            issues: unreadOnly ? [] : d.issues,
+        }))
+        .filter((d) => d.threads.length > 0 || d.issues.length > 0);
+    const filtered = [unreadOnly && "unread", attentionOnly && "needing attention"].filter(Boolean).join(" and ");
 
     return (
         <>
@@ -80,17 +67,34 @@ export function AllThreads({
                     )}
                     <span className="header-buttons">
                         {unread > 0 && (
-                            <IconButton tip="Mark all as read" onClick={() => void markAllRead()}>
+                            <IconButton tip="Mark all as read" onClick={onMarkAllRead}>
                                 <CheckAllIcon />
                             </IconButton>
                         )}
+                        {(attention || attentionOnly) && (
+                            <IconButton
+                                tip={attentionOnly ? "Show all threads" : "Only show threads that need attention"}
+                                on={attentionOnly}
+                                onClick={() => setAttentionOnly(!attentionOnly)}
+                            >
+                                <AttentionIcon />
+                            </IconButton>
+                        )}
                         {(unread > 0 || unreadOnly) && (
-                            <IconButton tip={unreadOnly ? "Show all threads" : "Only show unread threads"} on={unreadOnly} onClick={toggleUnreadOnly}>
+                            <IconButton
+                                tip={unreadOnly ? "Show all threads" : "Only show unread threads"}
+                                on={unreadOnly}
+                                onClick={() => setUnreadOnly(!unreadOnly)}
+                            >
                                 <UnreadIcon />
                             </IconButton>
                         )}
                         {threads.length > open && (
-                            <IconButton tip={showResolved ? "Hide resolved threads" : "Show resolved threads"} on={showResolved} onClick={toggleResolved}>
+                            <IconButton
+                                tip={showResolved ? "Hide resolved threads" : "Show resolved threads"}
+                                on={showResolved}
+                                onClick={() => setShowResolved(!showResolved)}
+                            >
                                 <CheckIcon />
                             </IconButton>
                         )}
@@ -100,8 +104,10 @@ export function AllThreads({
             </header>
             <div className="document all-threads" onScroll={onScroll}>
                 {documents?.length === 0 && <p className="empty">No comments yet. Select text in a file to start a thread.</p>}
-                {documents?.length !== 0 && shown.length === 0 && documents && <p className="empty">{unreadOnly ? "Nothing unread." : "No open threads."}</p>}
-                {shown.map(({ path, missing, threads }) => (
+                {documents?.length !== 0 && shown.length === 0 && documents && (
+                    <p className="empty">{filtered ? `Nothing ${filtered}.` : "No open threads."}</p>
+                )}
+                {shown.map(({ path, missing, threads, issues }) => (
                     // Folded by its heading; its name opens the file instead.
                     <details key={path} className="thread-group" open>
                         <summary>
@@ -118,6 +124,11 @@ export function AllThreads({
                             <span className="count">{threads.filter((t) => !t.resolved).length || ""}</span>
                             {missing && <span className="deleted">deleted</span>}
                         </summary>
+                        {issues.length > 0 && (
+                            <button className="thread summary issues" onClick={() => onOpenFile(path)}>
+                                {issues.join(" · ")}
+                            </button>
+                        )}
                         {threads.map((thread) => (
                             <ThreadCard key={thread.id} thread={thread} onOpen={() => onOpenThread(path, thread.id)} />
                         ))}
@@ -134,7 +145,7 @@ function ThreadCard({ thread, onOpen }: { thread: ThreadSummary; onOpen: () => v
     return (
         // Not a <button>, which can't hold the links a comment may have.
         <article
-            className={["thread summary", thread.resolved && "resolved", thread.unseen && "unseen"].filter(Boolean).join(" ")}
+            className={classes("thread summary", thread.resolved && "resolved", !!thread.unseen && "unseen")}
             role="button"
             tabIndex={0}
             onClick={(e) => {

@@ -1,9 +1,6 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
 import { renderMarkdown, SourceIndex, useLanguagesLoaded } from "./markdown.ts";
-import type { TextViewProps } from "./textView.ts";
-
-/** Highlight names (see `::highlight()` in styles.css), lowest priority first. */
-const HIGHLIGHTS = ["highlight", "highlight-resolved", "highlight-active", "highlight-draft", "unseen-thread", "search-match", "search-match-current-match"];
+import { HIGHLIGHTS, type TextViewProps } from "./textView.ts";
 
 /** The folder this window shows, whose files are served at `workspace://<folder>/`. */
 const folder = new URLSearchParams(location.search).get("folder");
@@ -19,13 +16,13 @@ export function MarkdownView({ path, text, highlights, ref }: TextViewProps) {
     }, [content]);
 
     useEffect(() => {
-        const ranges = new Map<string, Range[]>(HIGHLIGHTS.map((name) => [name, []]));
-        for (const { span, className } of highlights) {
+        const ranges = new Map<string, Range[]>(HIGHLIGHTS.map((kind) => [kind, []]));
+        for (const { span, kind } of highlights) {
             const range = index.current!.toRange(span);
-            if (range) ranges.get(className.replaceAll(" ", "-"))?.push(range);
+            if (range) ranges.get(kind)!.push(range);
         }
-        HIGHLIGHTS.forEach((name, priority) => CSS.highlights.set(name, Object.assign(new Highlight(...ranges.get(name)!), { priority })));
-        return () => HIGHLIGHTS.forEach((name) => CSS.highlights.delete(name));
+        HIGHLIGHTS.forEach((kind, priority) => CSS.highlights.set(`hl-${kind}`, Object.assign(new Highlight(...ranges.get(kind)!), { priority })));
+        return () => HIGHLIGHTS.forEach((kind) => CSS.highlights.delete(`hl-${kind}`));
     }, [content, highlights]);
 
     useImperativeHandle(ref, () => ({

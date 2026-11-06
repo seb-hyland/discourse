@@ -10,6 +10,7 @@ const Icon = ({ d, children }: { d: string; children?: ReactNode }) => (
 );
 
 export const CommentIcon = () => <Icon d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />;
+export const AttentionIcon = () => <Icon d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />;
 export const CheckIcon = () => <Icon d="M20 6 9 17l-5-5" />;
 export const MoveIcon = () => <Icon d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM22 12h-4M6 12H2M12 6V2M12 22v-4" />;
 export const ReplyIcon = () => <Icon d="M9 14 4 9l5-5M20 20v-7a4 4 0 0 0-4-4H4" />;

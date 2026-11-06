@@ -1,9 +1,7 @@
 import { useEffect, useReducer, useState } from "react";
 import type { FileSummary } from "../shared/api.ts";
 import { BackIcon, ChevronIcon, CommentIcon, ForwardIcon, IconButton, SearchIcon, SettingsIcon, SidebarIcon } from "./icons.tsx";
-
-/** Where whether the file list is hidden is remembered between visits. */
-const COLLAPSED = "files.collapsed";
+import { useStored } from "./util.ts";
 
 interface Folder {
     name: string;
@@ -31,11 +29,7 @@ export function FileTree({
 }) {
     const [filter, setFilter] = useState("");
     const [commentedOnly, setCommentedOnly] = useState(false);
-    const [collapsed, setCollapsedState] = useState(() => localStorage.getItem(COLLAPSED) === "true");
-    const setCollapsed = (to: boolean) => {
-        localStorage.setItem(COLLAPSED, String(to));
-        setCollapsedState(to);
-    };
+    const [collapsed, setCollapsed] = useStored("files.collapsed", false);
     const { canGoBack, canGoForward } = useHistory();
     const openThreads = files.reduce((n, f) => n + f.openThreads, 0);
     const unseen = files.reduce((n, f) => n + (f.unseen ?? 0), 0);
@@ -116,11 +110,14 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
             {folder.files.map((f) => (
                 <li key={f.path}>
                     <button className={f.path === current ? "current" : undefined} onClick={() => onOpen(f.path)}>
-                        <span className={f.missing ? "name missing" : "name"} data-tip={f.missing ? "Deleted, but its comments remain" : undefined}>
+                        <span
+                            className={f.missing ? "name missing" : "name"}
+                            data-tip={f.missing ? "Deleted, but its comments remain; open it to restore it" : undefined}
+                        >
                             {f.path.slice(f.path.lastIndexOf("/") + 1)}
                         </span>
                         {f.attention ? (
-                            <span className="count broken" data-tip="Some of its comments need your attention">
+                            <span className="count broken" data-tip={f.attention}>
                                 !
                             </span>
                         ) : (

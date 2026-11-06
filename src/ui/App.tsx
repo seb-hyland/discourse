@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
-import type { CommentUpdate, CommentView, DocumentView as Doc, ErrorAction, FileSummary, NewComment, Span } from "../shared/api.ts";
+import type {
+    CommentUpdate,
+    CommentView,
+    Conflict,
+    DocumentThreads,
+    DocumentView as Doc,
+    ErrorAction,
+    FileSummary,
+    NewComment,
+    Selection,
+    Span,
+} from "../shared/api.ts";
 import { AllThreads } from "./AllThreads.tsx";
 import { api } from "./api.ts";
 import { DocumentView, type DocumentHandle } from "./DocumentView.tsx";
@@ -10,16 +21,17 @@ import { ResizeHandle } from "./ResizeHandle.tsx";
 import { SearchPanel, type Result } from "./SearchPanel.tsx";
 import { ThreadPanel } from "./ThreadPanel.tsx";
 import { Tooltip } from "./Tooltip.tsx";
-import { drag, slideIn, slideOut, springBack } from "./pageMotion.ts";
+import { drag, slideIn, slideOut, slidePage, springBack } from "./pageMotion.ts";
 import { useSeenTracking } from "./seenTracking.ts";
 import { onSwipe } from "./swipe.ts";
+import { useStored } from "./util.ts";
 
 /** Changes to the open document's comments. Each resolves to whether it worked; failures are shown. */
 export interface Actions {
     add(comment: NewComment): Promise<boolean>;
     update(id: string, update: CommentUpdate): Promise<boolean>;
     remove(id: string): Promise<boolean>;
-    resolveConflict(id: string, version: number): Promise<boolean>;
+    resolveConflict(id: string, version: number | "both"): Promise<boolean>;
     restoreParent(replyId: string): Promise<boolean>;
     restoreDocument(): Promise<boolean>;
     /** Opens the document in the user's editor, at the start of `span`. */
@@ -31,6 +43,8 @@ export interface Actions {
 interface Message {
     text: string;
     error?: boolean;
+    /** Waits to be dismissed, as errors do, rather than going away by itself. */
+    lasting?: boolean;
     action?: { label: string; run: () => void };
 }
 
@@ -42,6 +56,8 @@ const SWIPE_RESIST = 0.12;
 
 /** How long a request may take before the window says it's loading. */
 const LOADING_DELAY_MS = 300;
+/** How many unread comments, on first opening a folder, are worth offering to mark read. */
+const FIRST_OPEN_UNREAD = 10;
 
 export function App() {
     const [files, setFiles] = useState<FileSummary[]>([]);
@@ -49,7 +65,8 @@ export function App() {
     const shown = useRef(doc);
     shown.current = doc;
     const [active, setActive] = useState<string | null>(null);
-    const [draft, setDraft] = useState<Span | null>(null);
+    /** Text a new thread is being written on, which waits while other documents are looked at. */
+    const [draft, setDraft] = useState<(Selection & { path: string }) | null>(null);
     const [selection, setSelection] = useState<Span | null>(null);
     const documentView = useRef<DocumentHandle>(null);
     const [message, setMessage] = useState<Message | null>(null);
@@ -64,14 +81,16 @@ export function App() {
     const [loading, setLoading] = useState(false);
     /** A comment a followed link points to, to show once its document is open. */
     const [linked, setLinked] = useState<string | null>(null);
-    const [filesWidth, setFilesWidth] = useStoredWidth("files", 240, [160, 480]);
-    const [threadsWidth, setThreadsWidth] = useStoredWidth("threads", 380, [280, 800]);
+    const [filesWidth, setFilesWidth] = useWidth("files", 240, [160, 480]);
+    const [threadsWidth, setThreadsWidth] = useWidth("threads", 380, [280, 800]);
     /** Bumped whenever files change on disk, for what depends on more than the open document. */
     const [version, setVersion] = useState(0);
     const [searching, setSearching] = useState<{ n: number; text?: string } | null>(null);
     const [matches, setMatches] = useState<{ all: Span[]; current: Span | null }>({ all: [], current: null });
     /** A match to show once its document is open. */
     const [pendingMatch, setPendingMatch] = useState<{ path: string; span: Span } | null>(null);
+    /** Every thread, as last listed, shown straight away when All threads is gone back to. */
+    const [listed, setListed] = useState<DocumentThreads[] | null>(null);
 
     /**
      * Shows the document at `path`. One that can't be opened leaves the shown one, with the URL put
@@ -90,7 +109,6 @@ export function App() {
             const moved = next?.path !== shown.current?.path;
             const change = () => {
                 if (moved) {
-                    setDraft(null);
                     setSelection(null);
                     setActive(null);
                 }
@@ -99,7 +117,7 @@ export function App() {
             if (swiped) {
                 flushSync(change);
                 slideIn(swiped);
-            } else if (moved && direction) slidePage(direction, change);
+            } else if (moved && direction) void slidePage(direction, () => flushSync(change));
             else change();
         };
 
@@ -158,19 +176,55 @@ export function App() {
         return () => removeEventListener("hashchange", onHashChange);
     }, []);
 
+    /** Marks every comment in the folder read. */
+    const markAllRead = () =>
+        api.markAllSeen().then((documents) => {
+            setListed(documents);
+            // Documents seen before would show their comments unread until read afresh.
+            visited.current.clear();
+            if (shown.current) void show(shown.current.path);
+            void api.files().then(setFiles, report);
+        }, report);
+
+    // On first opening a folder, everyone else's comments are unread: offer to start afresh.
+    useEffect(() => {
+        void api.unreadOnFirstOpen().then((unread) => {
+            if (unread >= FIRST_OPEN_UNREAD)
+                setMessage({
+                    text: `${unread} comments here you haven't read.`,
+                    lasting: true,
+                    action: { label: "Mark all read", run: () => void markAllRead() },
+                });
+        }, report);
+    }, []);
+
     // Saves elsewhere arrive in bursts, so wait for them to settle before refreshing.
     useEffect(() => {
-        const pending = { files: false, doc: false };
+        const pending = { files: false, doc: false, merged: 0, renamed: [] as [string, string][] };
         let timer: ReturnType<typeof setTimeout>;
-        return api.onChange(({ path, listChanged }) => {
+        return api.onChange(({ path, listChanged, merged, renamed }) => {
             pending.files ||= listChanged;
             pending.doc ||= path === shown.current?.path;
+            pending.merged += merged ?? 0;
+            if (renamed) pending.renamed.push([path, renamed]);
             clearTimeout(timer);
             timer = setTimeout(() => {
                 setVersion((v) => v + 1);
                 if (pending.files) void api.files().then(setFiles, report);
-                if (pending.doc && shown.current) void show(shown.current.path);
-                pending.files = pending.doc = false;
+                for (const [from, to] of pending.renamed) {
+                    visited.current.delete(from);
+                    setDraft((d) => (d?.path === from ? { ...d, path: to } : d));
+                    setMessage({ text: `${from} was renamed to ${to}, so its comments moved there.` });
+                    if (shown.current?.path !== from) continue;
+                    history.replaceState(null, "", hashOf(to));
+                    void show(to);
+                }
+                if (pending.merged) {
+                    const n = pending.merged;
+                    setMessage({ text: `Settled ${n === 1 ? "a comment conflict" : `${n} comment conflicts`} from the merge automatically.` });
+                }
+                if (pending.doc && shown.current && !pending.renamed.some(([from]) => from === shown.current?.path)) void show(shown.current.path);
+                Object.assign(pending, { files: false, doc: false, merged: 0, renamed: [] });
             }, 200);
         });
     }, []);
@@ -181,57 +235,66 @@ export function App() {
     useSeenTracking(
         () => document.querySelector(".page > .threads"),
         doc?.path,
-        (ids) => {
-            const path = doc!.path;
-            setDoc((d) => (d?.path === path ? markRead(d, ids) : d));
+        (versions) => {
+            setDoc((d) => d && markRead(d, versions));
             void api
-                .markSeen(path, ids)
+                .markSeen(versions)
                 .then(() => api.files())
                 .then(setFiles, report);
         },
     );
 
-    /** Makes a change, showing what it returns. A failure is most likely from out of date state, so reloads. */
-    const run = async (change: (path: string) => Promise<Doc | void>) => {
-        const path = doc!.path;
+    /**
+     * Makes a change to a document's comments, showing what it returns if that document is still
+     * shown. A failure is most likely from out of date state, so reloads.
+     */
+    const run = async (change: () => Promise<Doc | void>, path = doc!.path) => {
         try {
-            const next = await change(path);
-            if (next) setDoc(next);
+            const next = await change();
+            if (next && next.path === shown.current?.path) setDoc(next);
+            else visited.current.delete(path);
             setMessage(null);
             return true;
         } catch (e) {
             report(e);
-            void show(path);
+            if (path === shown.current?.path) void show(path);
             return false;
         }
     };
 
+    /** Makes a change, then says what it did, offering to undo it. */
+    const undoable = async (change: () => Promise<Doc>, done: string) => {
+        const path = doc!.path;
+        if (!(await run(change, path))) return false;
+        setMessage({ text: done, action: { label: "Undo", run: () => void run(() => api.undo(path, "undo"), path) } });
+        return true;
+    };
+
     const actions: Actions = {
         add: async (comment) => {
-            const added = await run((path) => api.add(path, comment));
+            const added = await run(() => api.add(doc!.path, comment));
             if (added && "span" in comment) setDraft(null);
             return added;
         },
-        update: (id, update) => run((path) => api.update(path, id, update)),
-        remove: async (id) => {
-            const removed = await run((path) => api.remove(path, id));
-            if (removed) setMessage({ text: "Deleted.", action: { label: "Undo", run: () => void run((path) => api.undo(path, "undo")) } });
-            return removed;
+        update: (id, update) => run(() => api.update(doc!.path, id, update)),
+        remove: (id) => undoable(() => api.remove(doc!.path, id), deletion(doc!, id)),
+        resolveConflict: (id, version) => {
+            const conflict = [...doc!.conflicts, ...doc!.threads.flatMap((t) => (t.conflict ? [t.conflict] : []))].find((c) => c.id === id)!;
+            return undoable(() => api.resolveConflict(doc!.path, id, version), kept(conflict, version));
         },
-        resolveConflict: (id, version) => run((path) => api.resolveConflict(path, id, version)),
-        restoreParent: (replyId) => run((path) => api.restoreParent(path, replyId)),
-        restoreDocument: () => run((path) => api.restoreDocument(path)),
+        restoreParent: (replyId) => run(() => api.restoreParent(doc!.path, replyId)),
+        restoreDocument: () => run(() => api.restoreDocument(doc!.path)),
         openInEditor: (span) =>
-            run((path) => {
+            run(() => {
                 const before = doc!.text.slice(0, span.from);
-                return api.openInEditor(path, before.split("\n").length, before.length - before.lastIndexOf("\n"));
+                return api.openInEditor(doc!.path, before.split("\n").length, before.length - before.lastIndexOf("\n"));
             }),
         openCommentFile: (file) => run(() => api.openCommentFile(file)),
     };
 
-    // News of something done goes away by itself; errors wait to be dismissed.
+    // News of something done goes away by itself; errors, and what asks for a decision, wait to be dismissed.
     useEffect(() => {
-        if (!message || message.error) return;
+        if (!message || message.error || message.lasting) return;
         const timer = setTimeout(() => setMessage(null), 6000);
         return () => clearTimeout(timer);
     }, [message]);
@@ -299,7 +362,7 @@ export function App() {
         const onKey = (e: KeyboardEvent) => {
             if (!doc || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z" || isTyping(e.target)) return;
             e.preventDefault();
-            void run((path) => api.undo(path, e.shiftKey ? "redo" : "undo"));
+            void run(() => api.undo(doc.path, e.shiftKey ? "redo" : "undo"));
         };
         addEventListener("keydown", onKey);
         return () => removeEventListener("keydown", onKey);
@@ -342,6 +405,10 @@ export function App() {
         }, 500);
     }, [linked, doc]);
 
+    const selected = doc && selection && { span: selection, quote: doc.text.slice(selection.from, selection.to) };
+    const shownDraft = draft && draft.path === doc?.path ? draft : null;
+    // Edited outside since it was selected: highlighted, it would be on the wrong text.
+    const draftChanged = !!shownDraft && doc!.text.slice(shownDraft.span.from, shownDraft.span.to) !== shownDraft.quote;
     return (
         <div className="app" style={{ "--files-size": `${filesWidth}px`, "--threads-size": `${threadsWidth}px` } as CSSProperties} onClickCapture={followLink}>
             <FileTree
@@ -360,16 +427,14 @@ export function App() {
                     {!doc && !loading && (
                         <AllThreads
                             version={version}
+                            documents={listed}
+                            onList={setListed}
                             onOpenThread={(path, id) => {
                                 setLinked(id);
                                 open(path);
                             }}
                             onOpenFile={open}
-                            onAllRead={() => {
-                                // Documents seen before would show their comments unread until read afresh.
-                                visited.current.clear();
-                                void api.files().then(setFiles, report);
-                            }}
+                            onMarkAllRead={() => void markAllRead()}
                             onError={report}
                         />
                     )}
@@ -380,7 +445,7 @@ export function App() {
                             doc={doc}
                             loading={loading}
                             active={active}
-                            draft={draft}
+                            draft={draftChanged ? null : (shownDraft?.span ?? null)}
                             selection={selection}
                             matches={matches}
                             onActivate={setActive}
@@ -388,7 +453,7 @@ export function App() {
                             onOpenInEditor={actions.openInEditor}
                             onRestore={actions.restoreDocument}
                             onComment={(span) => {
-                                setDraft(span);
+                                setDraft({ path: doc.path, span, quote: doc.text.slice(span.from, span.to) });
                                 setSelection(null);
                                 setActive(null);
                             }}
@@ -409,11 +474,12 @@ export function App() {
                     <ThreadPanel
                         doc={doc}
                         active={active}
-                        draft={draft}
-                        selection={selection}
+                        draft={shownDraft}
+                        draftChanged={draftChanged}
+                        selection={selected}
                         onActivate={reveal}
                         onMove={async (id) => {
-                            if (!(await actions.update(id, { span: selection! }))) return;
+                            if (!(await actions.update(id, { move: selected! }))) return;
                             setSelection(null);
                             setActive(id);
                         }}
@@ -448,36 +514,41 @@ export function App() {
 
 type Direction = "back" | "forward";
 
-/**
- * Makes `change` with the page (the document and its comments) sliding out one side and in the
- * other: going back, the new page comes from the left, as if it were turned back to.
- */
-function slidePage(direction: Direction, change: () => void) {
-    if (!document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return change();
-    const root = document.documentElement;
-    root.dataset.slide = direction;
-    document.startViewTransition(() => flushSync(change)).finished.finally(() => delete root.dataset.slide);
-}
-
 const hashOf = (path: string) => `#${encodeURIComponent(path).replaceAll("%2F", "/")}`;
 const pathOf = (hash: string) => decodeURIComponent(hash.slice(1));
 
 const isTyping = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || target.matches("input, textarea"));
 
 /** A panel's width, kept within bounds and remembered between visits. */
-function useStoredWidth(panel: string, initial: number, [min, max]: [number, number]) {
-    const key = `width.${panel}`;
-    const [width, setWidth] = useState(() => Number(localStorage.getItem(key)) || initial);
-    const resize = (to: number) => {
-        const clamped = Math.round(Math.min(max, Math.max(min, to)));
-        localStorage.setItem(key, String(clamped));
-        setWidth(clamped);
-    };
-    return [width, resize] as const;
+function useWidth(panel: string, initial: number, [min, max]: [number, number]) {
+    const [width, setWidth] = useStored(`width.${panel}`, initial);
+    return [width, (to: number) => setWidth(Math.round(Math.min(max, Math.max(min, to))))] as const;
 }
 
-/** `doc` with the comments `ids` read. */
-function markRead(doc: Doc, ids: string[]): Doc {
-    const read = (c: CommentView) => (c.unseen && ids.includes(c.id) ? { ...c, unseen: undefined } : c);
-    return { ...doc, threads: doc.threads.map((t) => ({ ...t, comments: t.comments.map(read) })), orphans: doc.orphans.map(read) };
+/** What deleting comment `id` deletes, said. */
+function deletion(doc: Doc, id: string): string {
+    const thread = doc.threads.find((t) => t.comments.some((c) => c.id === id));
+    const replies = (n: number) => (n === 1 ? "its reply" : `its ${n} replies`);
+    if (thread?.id === id) return thread.comments.length > 1 ? `Deleted the thread and ${replies(thread.comments.length - 1)}.` : "Deleted the thread.";
+    const under = (parent: string): string[] => thread?.comments.filter((c) => c.replyTo === parent).flatMap((c) => [c.id, ...under(c.id)]) ?? [];
+    const n = under(id).length;
+    return n ? `Deleted the reply and ${n === 1 ? "the reply" : `${n} replies`} under it.` : "Deleted the reply.";
+}
+
+/** What settling a conflict with `version` kept, said. */
+function kept({ versions, sides }: Conflict, version: number | "both"): string {
+    if (version === "both") return `Kept ${sides[0].label}, with ${sides[1].label} as a reply.`;
+    return versions[version] ? `Kept ${sides[version].label}.` : "Kept it deleted.";
+}
+
+/** `doc` with these versions of its comments read. */
+function markRead(doc: Doc, versions: string[]): Doc {
+    const read = <C extends CommentView>(c: C): C => (c.unseen && versions.includes(c.version) ? { ...c, unseen: undefined } : c);
+    const readConflict = (c: Conflict): Conflict => ({ ...c, versions: c.versions.map((v) => (typeof v === "object" && v ? read(v) : v)) });
+    return {
+        ...doc,
+        threads: doc.threads.map((t) => ({ ...t, comments: t.comments.map(read), conflict: t.conflict && readConflict(t.conflict) })),
+        orphans: doc.orphans.map(read),
+        conflicts: doc.conflicts.map(readConflict),
+    };
 }

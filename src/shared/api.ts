@@ -12,14 +12,11 @@ export interface FileSummary {
     resolvedThreads: number;
     /** The file is gone, but comments on it remain. */
     missing?: boolean;
-    /** Some of its comments need attention: unreadable, conflicting, or replies to deleted threads. */
-    attention?: boolean;
+    /** What about its comments needs attention, if anything: conflicts, replies to deleted comments, unreadable files. */
+    attention?: string;
     /** How many of its comments the user hasn't read, if any. */
     unseen?: number;
 }
-
-/** A comment the user hasn't read, or has read but which was edited since. */
-export type Unseen = "new" | "edited";
 
 export interface CommentView {
     id: string;
@@ -29,8 +26,10 @@ export interface CommentView {
     type?: string;
     /** For a reply to another reply, that reply's id. */
     replyTo?: string;
-    /** Set if the user hasn't read it as it is; never for their own. */
-    unseen?: Unseen;
+    /** Identifies the comment as it is now, to say it's been read (see `markSeen`). */
+    version: string;
+    /** Set if the user hasn't read it as it is, new or edited since; never for their own. */
+    unseen?: boolean;
 }
 
 /**
@@ -50,6 +49,8 @@ export interface ThreadView {
     resolved: boolean;
     /** In time order, the first one starting the thread; replies to replies say which in `replyTo`. */
     comments: CommentView[];
+    /** If the two sides of a merge changed its first comment differently, which `comments` then has one version of. */
+    conflict?: Conflict;
 }
 
 /** A version of a comment in a merge conflict, from one side of the merge. */
@@ -62,12 +63,16 @@ export interface ConflictVersion extends CommentView {
 /** A comment the two sides of a merge changed differently, waiting for the user to pick a version. */
 export interface Conflict {
     id: string;
-    /** Each side's version, or null where that side deleted it. */
-    versions: (ConflictVersion | null)[];
+    /** The comment file, by its path in the workspace. */
+    file: string;
+    /** Each side's version, null where that side deleted it, or "unreadable" if it isn't a valid comment. */
+    versions: (ConflictVersion | null | "unreadable")[];
     /** Each side's name, and the commit that last changed the comment there, if known. */
     sides: { label: string; commit?: { author: string; subject: string } }[];
     /** How many replies it has, which keeping it deleted deletes too. */
     replies: number;
+    /** For a reply, the thread it's in. */
+    thread?: string;
 }
 
 /** A comment file that couldn't be read. */
@@ -82,14 +87,21 @@ export interface DocumentView {
     text: string;
     missing?: boolean;
     threads: ThreadView[];
+    /** Conflicts over replies; those over a thread's first comment are on the thread. */
     conflicts: Conflict[];
     /** Replies to a comment that's been deleted, say by the other side of a merge; `replyTo` is unset if it began their thread. */
     orphans: CommentView[];
     problems: Problem[];
 }
 
-/** A new thread on `span`, or a reply to the comment `replyTo`. */
-export type NewComment = { text: string } & ({ span: Span } | { replyTo: string });
+/** A selection of a document: where it is, and its text, to check it's still there. */
+export interface Selection {
+    span: Span;
+    quote: string;
+}
+
+/** A new thread on a selection, or a reply to the comment `replyTo`. */
+export type NewComment = { text: string } & (Selection | { replyTo: string });
 
 export interface CommentUpdate {
     text?: string;
@@ -101,7 +113,7 @@ export interface CommentUpdate {
     /** For a thread's first comment: resolves or reopens the thread. */
     resolved?: boolean;
     /** For a thread's first comment: moves the thread here. */
-    span?: Span;
+    move?: Selection;
 }
 
 /** A workspace file changed on disk. */
@@ -110,6 +122,10 @@ export interface Change {
     path: string;
     /** Files or comments were added or removed, so the file list may be out of date. */
     listChanged: boolean;
+    /** How many of its comment conflicts were settled automatically, if any. */
+    merged?: number;
+    /** The document was renamed to this path, and its comments moved with it. */
+    renamed?: string;
 }
 
 /** A thread as listed with every other in the folder: where it is, and how it starts. */
@@ -126,6 +142,8 @@ export interface ThreadSummary {
     replies: number;
     /** How many of its comments the user hasn't read, if any. */
     unseen?: number;
+    /** It can't be placed, or its first comment is in a conflict. */
+    attention?: boolean;
 }
 
 /** A document's threads: open ones in the order they're in it, then resolved ones. */
@@ -134,6 +152,8 @@ export interface DocumentThreads {
     /** The file is gone, but comments on it remain. */
     missing?: boolean;
     threads: ThreadSummary[];
+    /** What else in its comments needs attention, such as "1 comment conflict to settle". */
+    issues: string[];
 }
 
 /** Where to search: nowhere, the open document, or the whole folder. */
@@ -184,8 +204,8 @@ export interface Bridge {
     update(path: string, id: string, update: CommentUpdate): Promise<DocumentView>;
     remove(path: string, id: string): Promise<DocumentView>;
     undo(path: string, direction: "undo" | "redo"): Promise<DocumentView>;
-    /** Settles a conflict with one of its versions, by index. */
-    resolveConflict(path: string, id: string, version: number): Promise<DocumentView>;
+    /** Settles a conflict with one of its versions, by index, or keeps the first with the second as a reply to it. */
+    resolveConflict(path: string, id: string, version: number | "both"): Promise<DocumentView>;
     /** Brings back the deleted comment an orphaned reply answers. */
     restoreParent(path: string, replyId: string): Promise<DocumentView>;
     /** Brings back a deleted document from history. */
@@ -196,10 +216,12 @@ export interface Bridge {
     /** Opens a file the app can't show, like a PDF, in its default app; anything else is shown in its folder. */
     openFile(path: string): Promise<void>;
     editSettings(): Promise<void>;
-    /** Every document with threads, in order of path. */
+    /** Every document with threads or comments needing attention, in order of path. */
     allThreads(): Promise<DocumentThreads[]>;
-    /** Remembers a document's comments, by id, as read as they are now. */
-    markSeen(path: string, ids: string[]): Promise<void>;
+    /** Remembers these versions of comments (`CommentView.version`) as read. */
+    markSeen(versions: string[]): Promise<void>;
+    /** How many comments are unread, if this is the first time the folder has been opened; else 0. Answers once. */
+    unreadOnFirstOpen(): Promise<number>;
     /** Remembers every comment in the folder as read, listing every document's threads again. */
     markAllSeen(): Promise<DocumentThreads[]>;
     /** Searches every document's text, comments, or both. */

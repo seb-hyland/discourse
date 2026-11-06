@@ -130,117 +130,9 @@ button {
     overflow: auto;
 }
 
-/*
- * Going to another page, the document and its comments slide out one side and in the other (see
- * slidePage); the rest of the window stays put.
- */
-.app > .page {
-    view-transition-name: page;
-}
-
-.search {
-    view-transition-name: search;
-}
-
-/* The sidebar stays put, above the pages sliding past it. */
-::view-transition-group(files) {
-    animation: none;
-    z-index: 2;
-}
-
-::view-transition-old(files) {
-    display: none;
-}
-
-::view-transition-new(files) {
-    animation: none;
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-    animation: none;
-}
-
-/*
- * Only sliding: the page and comments are their new size and place at once, rather than growing
- * or shrinking into them, and keep their size as they slide.
- */
-::view-transition-group(root),
-::view-transition-group(page) {
-    animation: none;
-}
-
-/* The page slides within its columns, never over the sidebar. */
-::view-transition-group(page) {
-    overflow: clip;
-}
-
-/* The old page goes, then the new one comes, rather than both showing at once. */
-::view-transition-old(page),
-::view-transition-new(page) {
-    width: auto;
-    height: auto;
-    animation-fill-mode: both;
-}
-
-::view-transition-old(page) {
-    animation-duration: 0.07s;
-    animation-timing-function: ease-in;
-}
-
-::view-transition-new(page) {
-    animation-delay: 0.06s;
-    animation-duration: 0.1s;
-    animation-timing-function: ease-out;
-}
-
-/* Nor do the columns ease to their new widths, as they otherwise would when comments come or go. */
+/* The columns don't ease to their new widths while pages slide (see pageMotion.ts), as they otherwise would when comments come or go. */
 html[data-slide] .app {
     transition: none;
-}
-
-html[data-slide="forward"]::view-transition-old(page) {
-    animation-name: slide-to-left;
-}
-
-html[data-slide="forward"]::view-transition-new(page) {
-    animation-name: slide-from-right;
-}
-
-html[data-slide="back"]::view-transition-old(page) {
-    animation-name: slide-to-right;
-}
-
-html[data-slide="back"]::view-transition-new(page) {
-    animation-name: slide-from-left;
-}
-
-@keyframes slide-to-left {
-    to {
-        translate: -96px;
-        opacity: 0;
-    }
-}
-
-@keyframes slide-from-right {
-    from {
-        translate: 96px;
-        opacity: 0;
-    }
-}
-
-@keyframes slide-to-right {
-    to {
-        translate: 96px;
-        opacity: 0;
-    }
-}
-
-@keyframes slide-from-left {
-    from {
-        translate: -96px;
-        opacity: 0;
-    }
 }
 
 /* Floating panels. */
@@ -309,7 +201,6 @@ main > .loading {
     /* Above the page as it slides, so the page goes under it rather than over it. */
     position: relative;
     z-index: 2;
-    view-transition-name: files;
 }
 
 .files .tree {
@@ -770,68 +661,53 @@ main:has(.code) .document-header {
     color: var(--line-number);
 }
 
-.highlight {
-    background: var(--highlight);
+/*
+ * Highlights in the document (see HIGHLIGHTS in textView.ts): classes in code, CSS highlights in
+ * rendered markdown.
+ */
+.hl-thread,
+::highlight(hl-thread) {
+    background-color: var(--highlight);
+}
+
+.hl-thread,
+.hl-resolved,
+.hl-active {
     border-radius: 2px;
     cursor: pointer;
 }
 
-.highlight.resolved {
-    background: var(--highlight-resolved);
-}
-
-.highlight.active {
-    background: var(--highlight-active);
-}
-
-.highlight.draft {
-    background: var(--draft);
-}
-
-/* Text with a thread the user has unread comments on. */
-.unseen-thread {
-    text-decoration: underline 2px var(--accent);
-    text-underline-offset: 3px;
-}
-
-/* The same, in rendered markdown (see MarkdownView). */
-::highlight(highlight) {
-    background-color: var(--highlight);
-}
-
-::highlight(highlight-resolved) {
+.hl-resolved,
+::highlight(hl-resolved) {
     background-color: var(--highlight-resolved);
 }
 
-::highlight(highlight-active) {
+.hl-active,
+::highlight(hl-active) {
     background-color: var(--highlight-active);
 }
 
-::highlight(highlight-draft) {
+.hl-draft,
+::highlight(hl-draft) {
     background-color: var(--draft);
 }
 
-::highlight(unseen-thread) {
+/* Text with a thread the user has unread comments on. */
+.hl-unseen,
+::highlight(hl-unseen) {
     text-decoration: underline 2px var(--accent);
     text-underline-offset: 3px;
 }
 
 /* Search matches, over comments' highlights. */
-.search-match {
-    background: var(--search-match);
-    border-radius: 2px;
-}
-
-.search-match.current-match {
-    background: var(--search-current);
-}
-
-::highlight(search-match),
+.hl-match,
+::highlight(hl-match),
 ::highlight(search-comment) {
     background-color: var(--search-match);
 }
 
-::highlight(search-match-current-match) {
+.hl-current,
+::highlight(hl-current) {
     background-color: var(--search-current);
 }
 
@@ -945,6 +821,17 @@ main:has(.code) .document-header {
 
 .thread.summary .comment {
     margin-top: 0.6rem;
+}
+
+/* What else in a document's comments needs attention, which opens it. */
+button.thread.summary.issues {
+    display: block;
+    width: 100%;
+    border-color: var(--error);
+    color: var(--error);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
 }
 
 .thread.summary .line,
@@ -1113,6 +1000,13 @@ main:has(.code) .document-header {
     border-color: var(--error);
 }
 
+/* A reply in conflict, set off within its thread. */
+.thread .reply-conflict {
+    margin: 0.75rem 0 0.75rem 0.25rem;
+    padding-left: 0.75rem;
+    border-left: 2px solid var(--error);
+}
+
 .thread .side {
     margin: 0 0 0.25rem;
     font-size: 12px;
@@ -1129,6 +1023,29 @@ main:has(.code) .document-header {
     border-top: 1px solid var(--border);
 }
 
+/* What differs between two versions in a conflict: the first side's words struck, the second's marked. */
+.thread .diff {
+    margin: 0.25rem 0 0.5rem;
+    white-space: pre-wrap;
+    font-size: 13px;
+}
+
+.thread :is(.diff, .side) del {
+    background: var(--red-bg);
+    color: var(--red);
+}
+
+.thread :is(.diff, .side) ins {
+    background: var(--green-bg);
+    color: var(--green);
+    text-decoration: none;
+}
+
+/* A replaced word and its replacement, apart. */
+.thread .diff del + ins {
+    margin-left: 0.25em;
+}
+
 /* Comments in a file or folder the user hasn't read. */
 .files .count.unread {
     color: var(--accent);
@@ -1142,7 +1059,10 @@ main:has(.code) .document-header {
     background: var(--accent);
 }
 
+/* Centred in a digit's width, to line up with the counts. */
 .files .count.broken {
+    min-width: 1ch;
+    text-align: center;
     color: var(--error);
 }
 
@@ -1185,6 +1105,39 @@ main:has(.code) .document-header {
 
 .thread.unseen::before {
     border-left-width: 4px;
+    opacity: 1;
+    transition: none;
+}
+
+/*
+ * An unread comment in a thread where others have been read, or the first if none have: a bar
+ * beside it like the thread's, fading the same way once read. On a reply, its line turns.
+ */
+.comment {
+    position: relative;
+}
+
+.comment::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -0.45rem;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+}
+
+.comment.reply::before {
+    left: -2px;
+    width: 2px;
+    border-radius: 0;
+}
+
+.comment.marked::before {
     opacity: 1;
     transition: none;
 }
@@ -1839,6 +1792,12 @@ button.icon.on {
 .start li button.icon svg {
     width: 12px;
     height: 12px;
+}
+
+/* A name never wraps, even at a hyphen; the location gives way instead. */
+.start li strong {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .start li span {

@@ -53,7 +53,7 @@ async function openFolder(root: string) {
     });
     folders.set(id, { root, window, workspace });
     const stopWatching = workspace.watch((change) => window.isDestroyed() || window.webContents.send("change", change));
-    void workspace.repinAll();
+    void workspace.settleAll();
     rememberBounds(window);
     window.on("page-title-updated", (e) => e.preventDefault());
     window.webContents.on("did-navigate-in-page", updateGo);
@@ -128,7 +128,7 @@ const handlers: Handlers = {
     update: change((w, path, id: string, update: CommentUpdate) => w.update(path, id, update)),
     remove: change((w, path, id: string) => w.remove(path, id)),
     undo: change((w, path, direction: "undo" | "redo") => w.undo(path, direction)),
-    resolveConflict: change((w, path, id: string, version: number) => w.resolveConflict(path, id, version)),
+    resolveConflict: change((w, path, id: string, version: number | "both") => w.resolveConflict(path, id, version)),
     restoreParent: change((w, path, replyId: string) => w.restoreParent(path, replyId)),
     restoreDocument: change((w, path) => w.restoreDocument(path)),
     openInEditor: async ({ workspace }, path, line, column) => {
@@ -147,7 +147,8 @@ const handlers: Handlers = {
     editSettings: () => editSettings(),
     search: ({ workspace }, query, within) => workspace.search(query, within),
     allThreads: ({ workspace }) => workspace.allThreads(),
-    markSeen: ({ workspace }, path, ids) => workspace.markSeen(path, ids),
+    markSeen: ({ workspace }, versions) => workspace.markSeen(versions),
+    unreadOnFirstOpen: ({ workspace }) => workspace.unreadOnFirstOpen(),
     markAllSeen: async ({ workspace }) => {
         await workspace.markAllSeen();
         return workspace.allThreads();
@@ -156,6 +157,7 @@ const handlers: Handlers = {
     open: async (_, root) => {
         // Only folders the start window was offered.
         if ((await recentFolders()).includes(root)) await openFolder(root);
+        else dialog.showErrorBox(`Can't open ${basename(root)}`, "It's been moved or deleted.");
     },
     choose: () => chooseFolder(),
     forget: async (_, root) => {

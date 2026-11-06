@@ -46,7 +46,7 @@ export function CodeView({ path, text, highlights, ref }: TextViewProps) {
         }
         const ranges = highlights
             .filter(({ span }) => span.from < span.to && span.to <= text.length)
-            .map(({ span, className }) => Decoration.mark({ class: className }).range(span.from, span.to));
+            .map(({ span, kind }) => Decoration.mark({ class: `hl-${kind}` }).range(span.from, span.to));
         editor.dispatch({ effects: marks.reconfigure(EditorView.decorations.of(Decoration.set(ranges, true))) });
     }, [text, highlights]);
 

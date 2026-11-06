@@ -46,22 +46,22 @@ export function DocumentView({
     const [progress, onScroll] = useScrollProgress();
 
     const highlights = useMemo((): Highlight[] => {
-        const threads = doc.threads.flatMap((t) => {
-            const className = t.id === active ? "highlight active" : t.resolved ? "highlight resolved" : "highlight";
+        const threads = doc.threads.flatMap((t): Highlight[] => {
             if (!t.span) return [];
+            const kind = t.id === active ? "active" : t.resolved ? "resolved" : "thread";
             // Threads with comments the user hasn't read are underlined too.
             return t.comments.some((c) => c.unseen)
                 ? [
-                      { span: t.span, className },
-                      { span: t.span, className: "unseen-thread" },
+                      { span: t.span, kind },
+                      { span: t.span, kind: "unseen" },
                   ]
-                : [{ span: t.span, className }];
+                : [{ span: t.span, kind }];
         });
-        const found = matches.all.map((span) => ({
+        const found = matches.all.map((span): Highlight => ({
             span,
-            className: span.from === matches.current?.from && span.to === matches.current.to ? "search-match current-match" : "search-match",
+            kind: span.from === matches.current?.from && span.to === matches.current.to ? "current" : "match",
         }));
-        return [...threads, ...(draft ? [{ span: draft, className: "highlight draft" }] : []), ...found];
+        return [...threads, ...(draft ? [{ span: draft, kind: "draft" as const }] : []), ...found];
     }, [doc, active, draft, matches]);
 
     /** Where `offset` is, relative to the top left of the scrolled content. */

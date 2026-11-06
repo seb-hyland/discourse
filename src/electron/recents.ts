@@ -9,13 +9,12 @@ const MAX_RECENTS = 10;
 
 const file = () => join(app.getPath("userData"), "recent-folders.json");
 
-/** Recently opened folders that still exist, most recent first. */
+/** Recently opened folders that still exist, most recent first. Those that don't are forgotten. */
 export async function recentFolders(): Promise<string[]> {
-    try {
-        return (JSON.parse(await readFile(file(), "utf8")) as string[]).filter((root) => existsSync(root));
-    } catch {
-        return [];
-    }
+    const stored: string[] = await readFile(file(), "utf8").then(JSON.parse, () => []);
+    const recents = stored.filter((root) => existsSync(root));
+    if (recents.length < stored.length) await writeFile(file(), JSON.stringify(recents));
+    return recents;
 }
 
 export async function rememberFolder(root: string): Promise<void> {

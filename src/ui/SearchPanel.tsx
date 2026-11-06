@@ -3,6 +3,7 @@ import type { CommentMatch, DocumentView as Doc, FileMatch, Scope, Span } from "
 import { findAll, preview, type Preview } from "../shared/search.ts";
 import { api } from "./api.ts";
 import { ChevronDownIcon, ChevronIcon, ChevronUpIcon, CloseIcon, CommentIcon, IconButton } from "./icons.tsx";
+import { useStored } from "./util.ts";
 
 /** A match to show: text in a file, or a comment. */
 export type Result = ({ kind: "file" } & FileMatch) | ({ kind: "comment" } & CommentMatch);
@@ -11,6 +12,7 @@ export type Result = ({ kind: "file" } & FileMatch) | ({ kind: "comment" } & Com
 const SEARCH_DELAY_MS = 150;
 /** The most matches shown from the open document's own text. */
 const CURRENT_LIMIT = 1000;
+/** The panel's height to start with, its least, and its most as a share of the window's. */
 const HEIGHT: [number, number, number] = [240, 120, 0.7];
 
 const key = (r: Result) => (r.kind === "file" ? `f:${r.path}:${r.span.from}` : `c:${r.path}:${r.id}`);
@@ -37,11 +39,12 @@ export function SearchPanel({
     onClose: () => void;
 }) {
     const [query, setQuery] = useState("");
-    const [files, setFiles] = useStoredScope("files");
-    const [comments, setComments] = useStoredScope("comments");
+    const [files, setFiles] = useStored<Scope>("search.files", "current");
+    const [comments, setComments] = useStored<Scope>("search.comments", "current");
     const [elsewhere, setElsewhere] = useState<{ results: Result[]; truncated: boolean }>({ results: [], truncated: false });
     const [selected, setSelected] = useState<string | null>(null);
-    const [height, setHeight] = useStoredHeight();
+    const [height, setStoredHeight] = useStored("height.search", HEIGHT[0]);
+    const setHeight = (to: number) => setStoredHeight(Math.round(Math.min(innerHeight * HEIGHT[2], Math.max(HEIGHT[1], to))));
     const input = useRef<HTMLInputElement>(null);
     const list = useRef<HTMLDivElement>(null);
 
@@ -74,7 +77,9 @@ export function SearchPanel({
 
     const latest = useRef(0);
     useEffect(() => {
-        const within = { files: files === "all", comments: comments === "all" };
+        // With no document open, "This file" means every file.
+        const everywhere = (scope: Scope) => scope === "all" || (!doc && scope === "current");
+        const within = { files: everywhere(files), comments: everywhere(comments) };
         const request = ++latest.current;
         if (!query || (!within.files && !within.comments)) return setElsewhere({ results: [], truncated: false });
         const timer = setTimeout(async () => {
@@ -87,7 +92,7 @@ export function SearchPanel({
             setElsewhere({ results, truncated: found.truncated });
         }, SEARCH_DELAY_MS);
         return () => clearTimeout(timer);
-    }, [query, files, comments, version]);
+    }, [query, files, comments, version, !doc]);
 
     /** All results, by file in order of path, which stays put as results are gone to so stepping goes through them all. */
     const groups = useMemo(() => {
@@ -134,9 +139,8 @@ export function SearchPanel({
     });
 
     const onKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "Enter") step(e.shiftKey ? -1 : 1);
-        else if (e.key === "Escape") onClose();
-        else return;
+        if (e.key !== "Enter") return;
+        step(e.shiftKey ? -1 : 1);
         e.preventDefault();
     };
 
@@ -266,26 +270,4 @@ function useCommentHighlights(query: string, doc: Doc | null) {
             CSS.highlights.delete("search-comment");
         };
     }, [query, doc]);
-}
-
-function useStoredScope(of: "files" | "comments") {
-    const storage = `search.${of}`;
-    const [scope, setScope] = useState<Scope>(() => (localStorage.getItem(storage) as Scope | null) ?? "current");
-    const set = (to: Scope) => {
-        localStorage.setItem(storage, to);
-        setScope(to);
-    };
-    return [scope, set] as const;
-}
-
-function useStoredHeight() {
-    const [initial, min, max] = HEIGHT;
-    const storage = "height.search";
-    const [height, setHeight] = useState(() => Number(localStorage.getItem(storage)) || initial);
-    const set = (to: number) => {
-        const clamped = Math.round(Math.min(innerHeight * max, Math.max(min, to)));
-        localStorage.setItem(storage, String(clamped));
-        setHeight(clamped);
-    };
-    return [height, set] as const;
 }
