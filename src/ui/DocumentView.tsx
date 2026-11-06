@@ -15,6 +15,7 @@ export function DocumentView({
     active,
     draft,
     selection,
+    matches,
     onActivate,
     onSelect,
     onComment,
@@ -28,6 +29,8 @@ export function DocumentView({
     active: string | null;
     draft: Span | null;
     selection: Span | null;
+    /** Search matches to highlight, and the one gone to last. */
+    matches: { all: Span[]; current: Span | null };
     onActivate: (id: string) => void;
     onSelect: (span: Span | null) => void;
     onComment: (span: Span) => void;
@@ -47,8 +50,12 @@ export function DocumentView({
             const className = t.id === active ? "highlight active" : t.resolved ? "highlight resolved" : "highlight";
             return t.span ? [{ span: t.span, className }] : [];
         });
-        return draft ? [...threads, { span: draft, className: "highlight draft" }] : threads;
-    }, [doc, active, draft]);
+        const found = matches.all.map((span) => ({
+            span,
+            className: span.from === matches.current?.from && span.to === matches.current.to ? "search-match current-match" : "search-match",
+        }));
+        return [...threads, ...(draft ? [{ span: draft, className: "highlight draft" }] : []), ...found];
+    }, [doc, active, draft, matches]);
 
     /** Where `offset` is, relative to the top left of the scrolled content. */
     const position = (offset: number) => {

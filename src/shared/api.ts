@@ -1,3 +1,5 @@
+import type { Preview } from "./search.ts";
+
 /** A range of a document's text, as UTF-16 offsets into its text with `\n` line endings. */
 export interface Span {
     from: number;
@@ -103,6 +105,35 @@ export interface Change {
     listChanged: boolean;
 }
 
+/** Where to search: nowhere, the open document, or the whole folder. */
+export type Scope = "none" | "current" | "all";
+
+/** Text in a file matching a search. */
+export interface FileMatch {
+    path: string;
+    span: Span;
+    preview: Preview;
+}
+
+/** A comment matching a search. */
+export interface CommentMatch {
+    /** The document it's on. */
+    path: string;
+    id: string;
+    /** Its thread's first comment. */
+    thread: string;
+    author: string;
+    /** Of the comment's own text. */
+    preview: Preview;
+}
+
+export interface SearchResults {
+    files: FileMatch[];
+    comments: CommentMatch[];
+    /** There were more matches than these, which were left out. */
+    truncated: boolean;
+}
+
 /** Something the user can do about an error, offered beside it. */
 export type ErrorAction = "settings";
 
@@ -134,6 +165,8 @@ export interface Bridge {
     /** Opens a file the app can't show, like a PDF, in its default app; anything else is shown in its folder. */
     openFile(path: string): Promise<void>;
     editSettings(): Promise<void>;
+    /** Searches every document's text, comments, or both. */
+    search(query: string, within: { files: boolean; comments: boolean }): Promise<SearchResults>;
     recents(): Promise<Recent[]>;
     /** Opens one of `recents` in its own window. */
     open(root: string): Promise<void>;

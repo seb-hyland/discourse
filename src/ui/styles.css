@@ -49,6 +49,16 @@ button {
     --files-width: 3.5rem;
 }
 
+/* With no comments to show, nor one being written, the document takes the comments' room. */
+.app:not(:has(.threads > *)) {
+    --threads-width: 0px;
+}
+
+.threads:empty,
+.app:not(:has(.threads > *)) .resize-handle.threads-edge {
+    display: none;
+}
+
 /* Room for the editor's toolbar while writing a comment. */
 .app:has(.threads .composer) {
     --threads-width: max(640px, var(--threads-size, 0px));
@@ -82,6 +92,12 @@ button {
     user-select: none;
 }
 
+.resizing-rows,
+.resizing-rows * {
+    cursor: row-resize !important;
+    user-select: none;
+}
+
 .resizing .app {
     transition: none;
 }
@@ -98,6 +114,7 @@ button {
 
 /* Floating panels. */
 .files,
+.search,
 .thread {
     background: var(--bg);
     border: 1.5px solid var(--border);
@@ -166,29 +183,31 @@ main > .loading {
     padding: 0.5rem;
 }
 
-/* Back, forward and settings, above the footer. */
-.files .navigation {
+/* Finding a file, above the footer's buttons. */
+.files .filter {
     display: flex;
-    padding: 0.35rem 0.5rem 0;
+    gap: 0.35rem;
+    padding: 0.5rem 0.5rem 0;
     border-top: 1px solid var(--border);
 }
 
-.files .navigation .spacer {
-    flex: 1;
-}
-
-.files .navigation + footer {
+.files .filter + footer {
     border-top: 0;
 }
 
+/* Hiding the sidebar, back, forward, search and settings. */
 .files footer {
     display: flex;
-    gap: 0.35rem;
-    padding: 0.5rem;
+    gap: 0.2rem;
+    padding: 0.35rem 0.5rem 0.5rem;
     border-top: 1px solid var(--border);
 }
 
-.files footer input {
+.files footer .spacer {
+    flex: 1;
+}
+
+.files .filter input {
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
@@ -297,6 +316,216 @@ main > .loading {
     border-top: 0;
 }
 
+/* Search, in a panel along the bottom of the document. */
+
+.search {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    margin: 0 0.75rem 0.75rem;
+    overflow: hidden;
+}
+
+/* Dragged up or down to make the panel taller or shorter. */
+.resize-handle.search-edge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: auto;
+    height: 6px;
+    cursor: row-resize;
+}
+
+.search header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    align-items: center;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.search header input {
+    flex: 1;
+    min-width: 10rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: inherit;
+    font: inherit;
+}
+
+.search header .status {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* None, this file or all, as one button split three ways. */
+.search .scope {
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+}
+
+.search .scope .label {
+    margin-right: 0.45rem;
+    font-weight: 700;
+}
+
+.search .scope button {
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+}
+
+/* Neighbours share a border; the chosen one's is drawn over theirs. */
+.search .scope button + button {
+    margin-left: -1px;
+}
+
+.search .scope .label + button {
+    border-radius: 6px 0 0 6px;
+}
+
+.search .scope button:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+.search .scope button:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.search .scope button.on {
+    position: relative;
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+.search .results {
+    flex: 1;
+    overflow: auto;
+    padding: 0.4rem 0.5rem;
+}
+
+.search ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.search summary {
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+    padding: 0.15rem 0.4rem 0.15rem 0.15rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 700;
+    list-style: none;
+}
+
+.search summary:hover {
+    background: var(--hover);
+}
+
+.search summary::-webkit-details-marker {
+    display: none;
+}
+
+.search summary svg {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--icon);
+    transition: rotate 0.15s;
+}
+
+.search details[open] > summary svg {
+    rotate: 90deg;
+}
+
+.search summary .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.search summary .count {
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.search li button {
+    display: flex;
+    width: 100%;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.1rem 0.4rem 0.1rem 0.4rem;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--text);
+    text-align: left;
+}
+
+.search li button:hover {
+    background: var(--hover);
+}
+
+.search li button.current {
+    background: var(--selected);
+}
+
+/* Line numbers, or a comment's icon, in a column. */
+.search .where {
+    flex-shrink: 0;
+    align-self: center;
+    display: inline-flex;
+    justify-content: flex-end;
+    width: 2.5rem;
+    color: var(--line-number);
+    font: 12px var(--font-mono);
+}
+
+.search .where svg {
+    width: 13px;
+    height: 13px;
+    color: var(--text-faint);
+}
+
+.search .author {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.search .preview {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.search mark {
+    border-radius: 2px;
+    background: var(--search-match);
+    color: inherit;
+}
+
+.search .truncated {
+    margin: 0.5rem 0.4rem;
+    color: var(--text-faint);
+    font-size: 12px;
+}
+
 /* Document */
 
 .document {
@@ -403,6 +632,25 @@ main:has(.code) .document-header {
 
 ::highlight(highlight-draft) {
     background-color: var(--draft);
+}
+
+/* Search matches, over comments' highlights. */
+.search-match {
+    background: var(--search-match);
+    border-radius: 2px;
+}
+
+.search-match.current-match {
+    background: var(--search-current);
+}
+
+::highlight(search-match),
+::highlight(search-comment) {
+    background-color: var(--search-match);
+}
+
+::highlight(search-match-current-match) {
+    background-color: var(--search-current);
 }
 
 .missing-document {

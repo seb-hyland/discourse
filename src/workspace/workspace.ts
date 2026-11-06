@@ -3,7 +3,23 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { watch } from "chokidar";
-import type { Change, CommentUpdate, CommentView, Conflict, DocumentView, FileSummary, Lost, NewComment, Problem, Span, ThreadView } from "../shared/api.ts";
+import type {
+    Change,
+    CommentMatch,
+    CommentUpdate,
+    CommentView,
+    Conflict,
+    DocumentView,
+    FileMatch,
+    FileSummary,
+    Lost,
+    NewComment,
+    Problem,
+    SearchResults,
+    Span,
+    ThreadView,
+} from "../shared/api.ts";
+import { findAll, preview } from "../shared/search.ts";
 import { diffEdits, mapSpan, resembles, type Edit } from "./anchoring.ts";
 import {
     authorName,
@@ -50,6 +66,12 @@ export interface StoredComment {
 }
 
 export const COMMENTS_DIR = ".comments";
+
+/** The most matches a search returns, in all and from any one file. */
+const SEARCH_LIMIT = 2000;
+const SEARCH_LIMIT_PER_FILE = 100;
+/** Files bigger than this, in bytes, aren't searched: they're surely not prose or code to read here. */
+const SEARCH_MAX_FILE = 4 * 1024 * 1024;
 
 interface Loaded {
     path: string;
@@ -122,6 +144,46 @@ export class Workspace {
             });
         }
         return [...summaries.values()].sort((a, b) => a.path.localeCompare(b.path));
+    }
+
+    /** Every match for `query` in the text of the folder's files, in their comments, or both. */
+    async search(query: string, within: { files: boolean; comments: boolean }): Promise<SearchResults> {
+        const results: SearchResults = { files: [], comments: [], truncated: false };
+        const room = () => SEARCH_LIMIT - results.files.length - results.comments.length;
+        if (!query) return results;
+        if (within.files) {
+            for (const path of (await listFiles(this.root)).filter((p) => !isOwn(p)).sort()) {
+                const content = await readFile(join(this.root, path)).catch(() => null);
+                if (!content || content.length > SEARCH_MAX_FILE) continue;
+                const text = decode(content);
+                if (text.includes("\0")) continue;
+                const spans = findAll(text, query, Math.min(SEARCH_LIMIT_PER_FILE, room()) + 1);
+                if (spans.length > Math.min(SEARCH_LIMIT_PER_FILE, room())) results.truncated = true;
+                for (const span of spans.slice(0, Math.min(SEARCH_LIMIT_PER_FILE, room())))
+                    results.files.push({ path, span, preview: preview(text, span) } satisfies FileMatch);
+                if (room() === 0) return results;
+            }
+        }
+        if (within.comments) {
+            for (const path of (await this.commentedPaths()).sort()) {
+                const names = await readdir(this.commentsDir(path)).catch(() => []);
+                const { comments } = await this.readComments(names.filter((n) => n.endsWith(".json")).map((n) => join(this.commentsDir(path), n)));
+                const sorted = [...comments].sort(([, a], [, b]) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+                for (const [id, c] of sorted) {
+                    const [span] = findAll(c.text, query, 1);
+                    if (!span) continue;
+                    if (room() === 0) return { ...results, truncated: true };
+                    results.comments.push({
+                        path,
+                        id,
+                        thread: c.anchor ? id : c.thread!,
+                        author: c.author,
+                        preview: preview(c.text, span),
+                    } satisfies CommentMatch);
+                }
+            }
+        }
+        return results;
     }
 
     /** The absolute path of a document, refusing anything outside the workspace or that isn't one. */

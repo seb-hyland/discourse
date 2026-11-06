@@ -140,6 +140,7 @@ const handlers: Handlers = {
         if (failure) throw new Error(`Couldn't open ${path}: ${failure}`);
     },
     editSettings: () => editSettings(),
+    search: ({ workspace }, query, within) => workspace.search(query, within),
     recents: async () => (await recentFolders()).map(describe),
     open: async (_, root) => {
         // Only folders the start window was offered.

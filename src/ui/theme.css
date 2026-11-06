@@ -64,6 +64,8 @@
     --highlight-active: oklch(from var(--amber) 0.8 0.17 h / 0.75);
     --highlight-resolved: color-mix(in srgb, var(--sand) 15%, transparent);
     --draft: color-mix(in srgb, var(--blue) 22%, transparent);
+    --search-match: color-mix(in srgb, var(--cyan) 28%, transparent);
+    --search-current: color-mix(in srgb, var(--cyan) 60%, transparent);
 
     --font-sans: "Libron", system-ui, sans-serif;
     --font-mono: "Monaspace Xenon", ui-monospace, Menlo, monospace;

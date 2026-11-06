@@ -28,6 +28,13 @@ export const SettingsIcon = () => (
     </Icon>
 );
 export const ChevronIcon = () => <Icon d="m9 18 6-6-6-6" />;
+export const ChevronUpIcon = () => <Icon d="m18 15-6-6-6 6" />;
+export const ChevronDownIcon = () => <Icon d="m6 9 6 6 6-6" />;
+export const SearchIcon = () => (
+    <Icon d="m21 21-4.35-4.35">
+        <circle cx="11" cy="11" r="8" />
+    </Icon>
+);
 export const SidebarIcon = () => <Icon d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18" />;
 
 /** An icon button, with an instant tooltip (see Tooltip). `on` makes it a toggle. */

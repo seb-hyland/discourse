@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
 import type { FileSummary } from "../shared/api.ts";
-import { BackIcon, ChevronIcon, CommentIcon, ForwardIcon, IconButton, SettingsIcon, SidebarIcon } from "./icons.tsx";
+import { BackIcon, ChevronIcon, CommentIcon, ForwardIcon, IconButton, SearchIcon, SettingsIcon, SidebarIcon } from "./icons.tsx";
 
 /** Where whether the file list is hidden is remembered between visits. */
 const COLLAPSED = "files.collapsed";
@@ -16,11 +16,16 @@ export function FileTree({
     files,
     current,
     onOpen,
+    onSearch,
+    searching,
     onSettings,
 }: {
     files: FileSummary[];
     current: string;
     onOpen: (path: string) => void;
+    onSearch: () => void;
+    /** The search panel is open. */
+    searching: boolean;
     onSettings: () => void;
 }) {
     const [filter, setFilter] = useState("");
@@ -41,28 +46,31 @@ export function FileTree({
                 </div>
             )}
             {!collapsed && (
-                <div className="navigation">
-                    <IconButton tip="Back" disabled={!canGoBack} onClick={() => history.back()}>
-                        <BackIcon />
-                    </IconButton>
-                    <IconButton tip="Forward" disabled={!canGoForward} onClick={() => history.forward()}>
-                        <ForwardIcon />
-                    </IconButton>
-                    <span className="spacer" />
-                    <IconButton tip="Settings" onClick={onSettings}>
-                        <SettingsIcon />
+                <div className="filter">
+                    <input placeholder="Find a file…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                    <IconButton tip="Only show commented files" on={commentedOnly} onClick={() => setCommentedOnly(!commentedOnly)}>
+                        <CommentIcon />
                     </IconButton>
                 </div>
             )}
             <footer>
-                <IconButton tip={collapsed ? "Show files" : "Hide files"} onClick={() => setCollapsed(!collapsed)}>
+                <IconButton tip={collapsed ? "Show sidebar" : "Hide sidebar"} onClick={() => setCollapsed(!collapsed)}>
                     <SidebarIcon />
                 </IconButton>
                 {!collapsed && (
                     <>
-                        <input placeholder="Find a file…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-                        <IconButton tip="Only show commented files" on={commentedOnly} onClick={() => setCommentedOnly(!commentedOnly)}>
-                            <CommentIcon />
+                        <IconButton tip="Back" disabled={!canGoBack} onClick={() => history.back()}>
+                            <BackIcon />
+                        </IconButton>
+                        <IconButton tip="Forward" disabled={!canGoForward} onClick={() => history.forward()}>
+                            <ForwardIcon />
+                        </IconButton>
+                        <span className="spacer" />
+                        <IconButton tip="Search (⌘F)" on={searching} onClick={onSearch}>
+                            <SearchIcon />
+                        </IconButton>
+                        <IconButton tip="Settings" onClick={onSettings}>
+                            <SettingsIcon />
                         </IconButton>
                     </>
                 )}

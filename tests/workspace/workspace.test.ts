@@ -362,3 +362,37 @@ test("editing a comment's date keeps its time of day and offset", async () => {
     ] = (await ws.view("a.md")).threads;
     assert.equal(edited.timestamp, "2020-02-03" + comments[0].timestamp.slice(10));
 });
+
+test("search finds text in every file and comments on every document, ignoring case", async () => {
+    const ws = await workspace("A line about apples.\nNothing here.\nApples again.\n");
+    await writeFile(join(ws.root, "b.ts"), "const apple = 1;\n");
+    await ws.add("a.md", { text: "Do we need the APPLES?", span: { from: 0, to: 6 } });
+    const [thread] = (await ws.view("a.md")).threads;
+    await ws.add("a.md", { text: "Pears instead.", replyTo: thread.id });
+
+    const { files, comments, truncated } = await ws.search("apple", { files: true, comments: true });
+    assert.deepEqual(
+        files.map((m) => [m.path, m.preview.line, m.preview.match]),
+        [
+            ["a.md", 1, "apple"],
+            ["a.md", 3, "Apple"],
+            ["b.ts", 1, "apple"],
+        ],
+    );
+    assert.deepEqual(files[0].span, { from: 13, to: 18 });
+    assert.deepEqual(
+        comments.map((m) => [m.path, m.id, m.thread, m.preview.match]),
+        [["a.md", thread.id, thread.id, "APPLE"]],
+    );
+    assert.equal(truncated, false);
+
+    const [reply] = (await ws.search("pears", { files: true, comments: true })).comments;
+    assert.deepEqual([reply.thread, reply.author], [thread.id, "Ada"]);
+    assert.deepEqual(await ws.search("apple", { files: false, comments: false }), { files: [], comments: [], truncated: false });
+});
+
+test("search skips the comment files themselves", async () => {
+    const ws = await workspace("Text.\n");
+    await ws.add("a.md", { text: "unique-word", span: { from: 0, to: 4 } });
+    assert.deepEqual((await ws.search("unique-word", { files: true, comments: false })).files, []);
+});

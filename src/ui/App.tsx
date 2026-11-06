@@ -5,6 +5,7 @@ import { DocumentView, type DocumentHandle } from "./DocumentView.tsx";
 import { FileTree } from "./FileTree.tsx";
 import { CloseIcon, IconButton } from "./icons.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
+import { SearchPanel, type Result } from "./SearchPanel.tsx";
 import { ThreadPanel } from "./ThreadPanel.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { onSwipe } from "./swipe.ts";
@@ -55,6 +56,12 @@ export function App() {
     const [linked, setLinked] = useState<string | null>(null);
     const [filesWidth, setFilesWidth] = useStoredWidth("files", 240, [160, 480]);
     const [threadsWidth, setThreadsWidth] = useStoredWidth("threads", 380, [280, 800]);
+    /** Bumped whenever files change on disk, for what depends on more than the open document. */
+    const [version, setVersion] = useState(0);
+    const [searching, setSearching] = useState<{ n: number; text?: string } | null>(null);
+    const [matches, setMatches] = useState<{ all: Span[]; current: Span | null }>({ all: [], current: null });
+    /** A match to show once its document is open. */
+    const [pendingMatch, setPendingMatch] = useState<{ path: string; span: Span } | null>(null);
 
     /**
      * Shows the document at `path`. One that can't be opened leaves the shown one, with the URL put
@@ -101,6 +108,7 @@ export function App() {
             pending.doc ||= path === shown.current?.path;
             clearTimeout(timer);
             timer = setTimeout(() => {
+                setVersion((v) => v + 1);
                 if (pending.files) void api.files().then(setFiles, report);
                 if (pending.doc && shown.current) void show(shown.current.path);
                 pending.files = pending.doc = false;
@@ -168,6 +176,36 @@ export function App() {
     // A two-finger swipe sideways on a trackpad does the same, unless it's scrolling something sideways.
     useEffect(() => onSwipe((direction) => (direction === "back" ? history.back() : history.forward())), []);
 
+    // ⌘F searches, starting with the text selected in the document if any.
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            const selected = selection && doc ? doc.text.slice(selection.from, selection.to) : "";
+            setSearching((s) => ({ n: (s?.n ?? 0) + 1, text: selected && !selected.includes("\n") ? selected : undefined }));
+        };
+        addEventListener("keydown", onKey);
+        return () => removeEventListener("keydown", onKey);
+    }, [selection, doc]);
+
+    /** Shows a search result: a match in a document's text, or a comment. */
+    const goToResult = (r: Result) => {
+        if (r.kind === "comment") {
+            setLinked(r.id);
+            if (r.path !== doc?.path) open(r.path);
+        } else if (r.path === doc?.path) documentView.current?.reveal(r.span);
+        else {
+            setPendingMatch({ path: r.path, span: r.span });
+            open(r.path);
+        }
+    };
+    useEffect(() => {
+        if (!pendingMatch || doc?.path !== pendingMatch.path) return;
+        setPendingMatch(null);
+        // Once the document is drawn.
+        requestAnimationFrame(() => documentView.current?.reveal(pendingMatch.span));
+    }, [doc, pendingMatch]);
+
     // ⌘Z and ⇧⌘Z undo and redo changes to comments, except while typing, where they're the typing's own.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -218,7 +256,14 @@ export function App() {
 
     return (
         <div className="app" style={{ "--files-size": `${filesWidth}px`, "--threads-size": `${threadsWidth}px` } as CSSProperties} onClickCapture={followLink}>
-            <FileTree files={files} current={doc?.path ?? ""} onOpen={open} onSettings={() => api.editSettings().catch(report)} />
+            <FileTree
+                files={files}
+                current={doc?.path ?? ""}
+                onOpen={open}
+                onSearch={() => setSearching((s) => (s ? null : { n: 1 }))}
+                searching={!!searching}
+                onSettings={() => api.editSettings().catch(report)}
+            />
             <ResizeHandle panel="files" width={filesWidth} onResize={setFilesWidth} />
             <main>
                 {!doc && loading && <p className="loading">Loading…</p>}
@@ -231,6 +276,7 @@ export function App() {
                         active={active}
                         draft={draft}
                         selection={selection}
+                        matches={matches}
                         onActivate={setActive}
                         onSelect={setSelection}
                         onOpenInEditor={actions.openInEditor}
@@ -240,6 +286,16 @@ export function App() {
                             setSelection(null);
                             setActive(null);
                         }}
+                    />
+                )}
+                {searching && (
+                    <SearchPanel
+                        doc={doc}
+                        version={version}
+                        focus={searching}
+                        onGo={goToResult}
+                        onMatches={(all, current) => setMatches({ all, current })}
+                        onClose={() => setSearching(null)}
                     />
                 )}
             </main>
