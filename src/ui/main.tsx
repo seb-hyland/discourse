@@ -8,8 +8,8 @@ import "./theme.css";
 import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    {/* Without a folder, this is the start window. */}
-    {new URLSearchParams(location.search).has("folder") ? <App /> : <Start />}
-  </StrictMode>,
+    <StrictMode>
+        {/* Without a folder, this is the start window. */}
+        {new URLSearchParams(location.search).has("folder") ? <App /> : <Start />}
+    </StrictMode>,
 );
