@@ -57,3 +57,9 @@ export function IconButton({
         </button>
     );
 }
+export const CheckAllIcon = () => <Icon d="M18 6 7 17l-5-5M22 10l-7.5 7.5L13 16" />;
+export const UnreadIcon = () => (
+    <Icon d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z">
+        <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+    </Icon>
+);

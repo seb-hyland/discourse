@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -31,12 +32,15 @@ let vite: ViteDevServer | null = null;
 
 protocol.registerSchemesAsPrivileged([{ scheme: "workspace", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
+/** Where which of a folder's comments have been read is kept: on this computer, as it's the user's own. */
+const seenFile = (root: string) => join(app.getPath("userData"), "seen", `${createHash("sha1").update(root).digest("hex").slice(0, 16)}.json`);
+
 async function openFolder(root: string) {
     const open = [...folders.values()].find((f) => f.root === root);
     if (open) return open.window.focus();
     let workspace: Workspace;
     try {
-        workspace = await Workspace.open(root);
+        workspace = await Workspace.open(root, seenFile(root));
     } catch (e) {
         return dialog.showErrorBox(`Can't open ${basename(root)}`, (e as Error).message);
     }
@@ -58,6 +62,7 @@ async function openFolder(root: string) {
     window.on("closed", () => {
         folders.delete(id);
         void stopWatching.then((stop) => stop());
+        workspace.seen.flush();
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
         if (/^(https?|mailto):/.test(url)) void shell.openExternal(url);
@@ -142,6 +147,11 @@ const handlers: Handlers = {
     editSettings: () => editSettings(),
     search: ({ workspace }, query, within) => workspace.search(query, within),
     allThreads: ({ workspace }) => workspace.allThreads(),
+    markSeen: ({ workspace }, path, ids) => workspace.markSeen(path, ids),
+    markAllSeen: async ({ workspace }) => {
+        await workspace.markAllSeen();
+        return workspace.allThreads();
+    },
     recents: async () => (await recentFolders()).map(describe),
     open: async (_, root) => {
         // Only folders the start window was offered.

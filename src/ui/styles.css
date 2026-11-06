@@ -474,7 +474,7 @@ main > .loading {
 
 .files .count {
     align-self: center;
-    color: var(--accent);
+    color: var(--text-faint);
     font-size: 11px;
     font-weight: 600;
 }
@@ -791,6 +791,12 @@ main:has(.code) .document-header {
     background: var(--draft);
 }
 
+/* Text with a thread the user has unread comments on. */
+.unseen-thread {
+    text-decoration: underline 2px var(--accent);
+    text-underline-offset: 3px;
+}
+
 /* The same, in rendered markdown (see MarkdownView). */
 ::highlight(highlight) {
     background-color: var(--highlight);
@@ -806,6 +812,11 @@ main:has(.code) .document-header {
 
 ::highlight(highlight-draft) {
     background-color: var(--draft);
+}
+
+::highlight(unseen-thread) {
+    text-decoration: underline 2px var(--accent);
+    text-underline-offset: 3px;
 }
 
 /* Search matches, over comments' highlights. */
@@ -846,7 +857,9 @@ main:has(.code) .document-header {
 }
 
 /* Kept on the header's line, without making it taller. */
-.all-threads-header .toggle-resolved {
+.all-threads-header .header-buttons {
+    display: flex;
+    gap: 0.15rem;
     align-self: center;
     margin: -0.3rem 0 -0.3rem auto;
 }
@@ -1119,6 +1132,19 @@ main:has(.code) .document-header {
     border-top: 1px solid var(--border);
 }
 
+/* Comments in a file or folder the user hasn't read. */
+.files .count.unread {
+    color: var(--accent);
+}
+
+.files .unread-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
 .files .count.broken {
     color: var(--error);
 }
@@ -1134,6 +1160,40 @@ main:has(.code) .document-header {
 
 .thread.resolved {
     opacity: 0.6;
+}
+
+/*
+ * Threads with comments the user hasn't read: their left border thicker and accented, following
+ * the card's shape and fading into the plain border round its corners; it fades away once they're
+ * read. Drawn over the border, so nothing in the card moves.
+ */
+.thread {
+    position: relative;
+}
+
+.thread::before {
+    content: "";
+    position: absolute;
+    inset: -1.5px;
+    border: 1.5px solid var(--accent);
+    border-radius: 10px;
+    mask-image: linear-gradient(to right, #000 4px, transparent 18px);
+    opacity: 0;
+    /* Once read, it narrows to the border's width as its colour fades. */
+    transition:
+        border-left-width 0.15s ease-in-out,
+        opacity 0.15s;
+    pointer-events: none;
+}
+
+.thread.unseen::before {
+    border-left-width: 4px;
+    opacity: 1;
+    transition: none;
+}
+
+.thread.summary .unread-count {
+    color: var(--accent);
 }
 
 .thread > header {

@@ -10,6 +10,7 @@ interface Folder {
     folders: Map<string, Folder>;
     files: FileSummary[];
     openThreads: number;
+    unseen: number;
 }
 
 export function FileTree({
@@ -37,6 +38,7 @@ export function FileTree({
     };
     const { canGoBack, canGoForward } = useHistory();
     const openThreads = files.reduce((n, f) => n + f.openThreads, 0);
+    const unseen = files.reduce((n, f) => n + (f.unseen ?? 0), 0);
     const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()) && (!commentedOnly || f.openThreads + f.resolvedThreads > 0));
 
     return (
@@ -46,7 +48,7 @@ export function FileTree({
                     <button className={current === "" ? "all-threads current" : "all-threads"} onClick={() => onOpen("")}>
                         <CommentIcon />
                         <span className="name">All threads</span>
-                        {openThreads > 0 && <span className="count">{openThreads}</span>}
+                        <Count open={openThreads} unseen={unseen} />
                     </button>
                     <hr className="divider" />
                     <FolderContents folder={buildTree(shown)} current={current} onOpen={onOpen} />
@@ -105,7 +107,7 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
                         <summary>
                             <ChevronIcon />
                             <span className="name">{sub.name}</span>
-                            {sub.openThreads > 0 && <span className="count">{sub.openThreads}</span>}
+                            <Count open={sub.openThreads} unseen={sub.unseen} />
                         </summary>
                         <FolderContents folder={sub} current={current} onOpen={onOpen} />
                     </details>
@@ -122,7 +124,7 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
                                 !
                             </span>
                         ) : (
-                            f.openThreads > 0 && <span className="count">{f.openThreads}</span>
+                            <Count open={f.openThreads} unseen={f.unseen ?? 0} />
                         )}
                     </button>
                 </li>
@@ -136,10 +138,12 @@ function buildTree(files: FileSummary[]): Folder {
     for (const file of files) {
         let at = root;
         at.openThreads += file.openThreads;
+        at.unseen += file.unseen ?? 0;
         for (const name of file.path.split("/").slice(0, -1)) {
             if (!at.folders.has(name)) at.folders.set(name, folder(name));
             at = at.folders.get(name)!;
             at.openThreads += file.openThreads;
+            at.unseen += file.unseen ?? 0;
         }
         at.files.push(file);
     }
@@ -155,5 +159,20 @@ function compact(f: Folder): Folder {
 }
 
 function folder(name: string): Folder {
-    return { name, folders: new Map(), files: [], openThreads: 0 };
+    return { name, folders: new Map(), files: [], openThreads: 0, unseen: 0 };
+}
+
+/**
+ * How many open threads a file or folder has, picked out if the user has comments in it to read.
+ * With only resolved threads to read, a dot says so instead.
+ */
+function Count({ open, unseen }: { open: number; unseen: number }) {
+    const tip = unseen === 0 ? undefined : unseen === 1 ? "1 unread comment" : `${unseen} unread comments`;
+    if (open > 0)
+        return (
+            <span className={unseen ? "count unread" : "count"} data-tip={tip}>
+                {open}
+            </span>
+        );
+    return unseen > 0 && <span className="unread-dot" data-tip={tip} />;
 }

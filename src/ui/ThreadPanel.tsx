@@ -140,7 +140,7 @@ function CommentHeader({ comment, status, children }: { comment: CommentView; st
 /** A comment to read, without its buttons: folded, only its first lines show. */
 export function CommentBody({ comment, status, folded, children }: { comment: CommentView; status?: string; folded?: boolean; children?: ReactNode }) {
     return (
-        <div className={folded ? "comment folded" : "comment"}>
+        <div className={classes("comment", folded && "folded", ...unseenClasses(comment))}>
             <CommentHeader comment={comment} status={status} />
             <Markdown value={comment.text} />
             {children}
@@ -176,9 +176,9 @@ function Thread({
     }, [active]);
     const folded = thread.resolved && !opened;
 
-    const classes = ["thread", active && "active", thread.resolved && "resolved"].filter(Boolean).join(" ");
+    const unseen = thread.comments.some((c) => c.unseen);
     return (
-        <section ref={ref} className={classes} onClick={onActivate}>
+        <section ref={ref} className={classes("thread", active && "active", thread.resolved && "resolved", unseen && "unseen")} onClick={onActivate}>
             <header>
                 <blockquote className={current === null && thread.lost !== "deleted" ? "anchor missing" : "anchor"}>{current ?? thread.quote}</blockquote>
                 <menu onClick={(e) => e.stopPropagation()}>
@@ -304,7 +304,7 @@ function Comment({
         );
     }
     return (
-        <div className={first ? "comment" : "comment reply"} data-comment={comment.id}>
+        <div className={classes("comment", !first && "reply", ...unseenClasses(comment))} data-comment={comment.id}>
             <CommentHeader comment={comment}>
                 <IconButton tip="Reply" onClick={onReply}>
                     <ReplyIcon />
@@ -447,3 +447,8 @@ function Collapsible({ children }: { children: ReactNode }) {
         </>
     );
 }
+
+const classes = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(" ");
+
+/** Marks a comment the user hasn't read, as new or edited since. */
+const unseenClasses = ({ unseen }: CommentView) => [unseen && "unseen", unseen];

@@ -14,7 +14,12 @@ export interface FileSummary {
     missing?: boolean;
     /** Some of its comments need attention: unreadable, conflicting, or replies to deleted threads. */
     attention?: boolean;
+    /** How many of its comments the user hasn't read, if any. */
+    unseen?: number;
 }
+
+/** A comment the user hasn't read, or has read but which was edited since. */
+export type Unseen = "new" | "edited";
 
 export interface CommentView {
     id: string;
@@ -24,6 +29,8 @@ export interface CommentView {
     type?: string;
     /** For a reply to another reply, that reply's id. */
     replyTo?: string;
+    /** Set if the user hasn't read it as it is; never for their own. */
+    unseen?: Unseen;
 }
 
 /**
@@ -117,6 +124,8 @@ export interface ThreadSummary {
     resolved: boolean;
     first: CommentView;
     replies: number;
+    /** How many of its comments the user hasn't read, if any. */
+    unseen?: number;
 }
 
 /** A document's threads: open ones in the order they're in it, then resolved ones. */
@@ -189,6 +198,10 @@ export interface Bridge {
     editSettings(): Promise<void>;
     /** Every document with threads, in order of path. */
     allThreads(): Promise<DocumentThreads[]>;
+    /** Remembers a document's comments, by id, as read as they are now. */
+    markSeen(path: string, ids: string[]): Promise<void>;
+    /** Remembers every comment in the folder as read, listing every document's threads again. */
+    markAllSeen(): Promise<DocumentThreads[]>;
     /** Searches every document's text, comments, or both. */
     search(query: string, within: { files: boolean; comments: boolean }): Promise<SearchResults>;
     recents(): Promise<Recent[]>;

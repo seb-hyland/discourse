@@ -18,9 +18,12 @@ import type {
     Problem,
     SearchResults,
     Span,
+    ThreadSummary,
     ThreadView,
+    Unseen,
 } from "../shared/api.ts";
 import { findAll, preview } from "../shared/search.ts";
+import { SeenStore } from "./seen.ts";
 import { diffEdits, mapSpan, resembles, type Edit } from "./anchoring.ts";
 import {
     authorName,
@@ -106,20 +109,24 @@ export class Workspace {
     /** The edits from one blob's text to another's, by both ids. */
     private diffs = new Map<string, Promise<Edit[] | null>>();
     private pushed = { remotes: "", blobs: new Set<string>() };
+    /** Which comments the user has read. */
+    readonly seen: SeenStore;
 
-    private constructor(root: string, author: string, gitDir: string) {
+    private constructor(root: string, author: string, gitDir: string, seen: SeenStore) {
         this.root = root;
         this.author = author;
         this.gitDir = gitDir;
+        this.seen = seen;
     }
 
-    static async open(root: string): Promise<Workspace> {
+    /** Opens the folder at `root`, remembering which comments have been read in `seenFile`, or only while open. */
+    static async open(root: string, seenFile: string | null = null): Promise<Workspace> {
         const gitDir = await git(root, ["rev-parse", "--absolute-git-dir"]).catch(() => {
             throw new Error(
                 `${root} isn't in a git repository. Discourse keeps comments alongside git history; jj repositories need to be colocated with git.`,
             );
         });
-        return new Workspace(root, await authorName(root), gitDir.trim());
+        return new Workspace(root, await authorName(root), gitDir.trim(), await SeenStore.open(seenFile));
     }
 
     async files(): Promise<FileSummary[]> {
@@ -131,6 +138,7 @@ export class Workspace {
             const loaded = await this.load(path).catch(() => null);
             const roots = loaded ? [...loaded.comments.values()].filter((c) => c.anchor) : [];
             const open = roots.filter((c) => !c.resolved).length;
+            const unseen = loaded ? [...loaded.comments].filter(([id, c]) => this.unseen(id, c)).length : 0;
             summaries.set(path, {
                 path,
                 openThreads: open,
@@ -142,6 +150,7 @@ export class Workspace {
                     loaded.conflicts.size > 0 ||
                     [...loaded.comments.values()].some((c) => !c.anchor && missingParent(loaded, c)) ||
                     undefined,
+                unseen: unseen || undefined,
             });
         }
         return [...summaries.values()].sort((a, b) => a.path.localeCompare(b.path));
@@ -153,7 +162,7 @@ export class Workspace {
         for (const path of (await this.commentedPaths()).sort()) {
             const view = await this.view(path).catch(() => null);
             if (!view || view.threads.length === 0) continue;
-            const threads = view.threads.map((t) => ({
+            const threads = view.threads.map((t): ThreadSummary => ({
                 id: t.id,
                 quote: t.quote,
                 current: t.span && view.text.slice(t.span.from, t.span.to),
@@ -162,6 +171,7 @@ export class Workspace {
                 resolved: t.resolved,
                 first: t.comments[0],
                 replies: t.comments.length - 1,
+                unseen: t.comments.filter((c) => c.unseen).length || undefined,
             }));
             // Open before resolved, then down the document, with those that can't be placed last.
             const line = (t: (typeof threads)[number]) => t.line ?? Number.MAX_SAFE_INTEGER;
@@ -234,6 +244,20 @@ export class Workspace {
     }
 
     /** Moves the anchors that aren't pushed yet in every document, as `view` would. */
+    /** Remembers comments on `path`, by id, as read as they are now. */
+    async markSeen(path: string, ids: string[]): Promise<void> {
+        const { comments } = await this.load(path);
+        this.seen.mark(ids.flatMap((id) => (comments.has(id) ? [{ id, text: comments.get(id)!.text }] : [])));
+    }
+
+    /** Remembers every comment in the folder as read as it is now. */
+    async markAllSeen(): Promise<void> {
+        for (const path of await this.commentedPaths()) {
+            const loaded = await this.load(path).catch(() => null);
+            if (loaded) this.seen.mark([...loaded.comments].map(([id, { text }]) => ({ id, text })));
+        }
+    }
+
     async repinAll(): Promise<void> {
         for (const path of await this.commentedPaths()) await this.view(path).catch(() => {});
     }
@@ -268,6 +292,8 @@ export class Workspace {
         if (input.resolved !== undefined) comment.resolved = input.resolved;
         if (input.span) comment.anchor = await this.anchor(loaded, input.span);
         await this.change(path, [[id, comment]]);
+        // The user has read what they just changed it to, whoever wrote it.
+        this.seen.mark([{ id, text: comment.text }]);
     }
 
     /** Deletes a comment and the replies to it: all the thread's, if it starts one. */
@@ -517,7 +543,7 @@ export class Workspace {
         };
         for (const [id, comment] of comments) {
             if (!comment.anchor) {
-                if (missingParent(loaded, comment)) orphans.push({ ...commentView(id, comment), replyTo: comment.replyTo });
+                if (missingParent(loaded, comment)) orphans.push({ ...this.commentView(id, comment), replyTo: comment.replyTo });
                 continue;
             }
             const place = places.get(id)!;
@@ -529,7 +555,7 @@ export class Workspace {
                 quote: comment.anchor.quote,
                 resolved: comment.resolved ?? false,
                 // While the reply it answers is in a conflict, a reply shows as answering the thread.
-                comments: thread.map(([id, c]) => ({ ...commentView(id, c), replyTo: c.replyTo && comments.has(c.replyTo) ? c.replyTo : undefined })),
+                comments: thread.map(([id, c]) => ({ ...this.commentView(id, c), replyTo: c.replyTo && comments.has(c.replyTo) ? c.replyTo : undefined })),
             });
         }
         // Threads that can't be placed come first, to be moved; the rest in document order.
@@ -543,6 +569,17 @@ export class Workspace {
             })),
         );
         return { path, text, missing: !content || undefined, threads, conflicts, orphans, problems };
+    }
+
+    /** A comment as shown, saying whether the user has yet to read it. */
+    private commentView(id: string, comment: StoredComment): CommentView {
+        const unseen = this.unseen(id, comment);
+        return { ...commentView(id, comment), ...(unseen && { unseen }) };
+    }
+
+    /** Whether the user has yet to read a comment as it is; they've read their own. */
+    private unseen(id: string, { author, text }: StoredComment): Unseen | undefined {
+        return author === this.author ? undefined : this.seen.status(id, text);
     }
 
     /** Writes or deletes (null) comments, as one step of undo history. */

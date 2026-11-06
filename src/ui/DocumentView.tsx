@@ -48,7 +48,14 @@ export function DocumentView({
     const highlights = useMemo((): Highlight[] => {
         const threads = doc.threads.flatMap((t) => {
             const className = t.id === active ? "highlight active" : t.resolved ? "highlight resolved" : "highlight";
-            return t.span ? [{ span: t.span, className }] : [];
+            if (!t.span) return [];
+            // Threads with comments the user hasn't read are underlined too.
+            return t.comments.some((c) => c.unseen)
+                ? [
+                      { span: t.span, className },
+                      { span: t.span, className: "unseen-thread" },
+                  ]
+                : [{ span: t.span, className }];
         });
         const found = matches.all.map((span) => ({
             span,

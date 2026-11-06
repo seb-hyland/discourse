@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
-import type { CommentUpdate, DocumentView as Doc, ErrorAction, FileSummary, NewComment, Span } from "../shared/api.ts";
+import type { CommentUpdate, CommentView, DocumentView as Doc, ErrorAction, FileSummary, NewComment, Span } from "../shared/api.ts";
 import { AllThreads } from "./AllThreads.tsx";
 import { api } from "./api.ts";
 import { DocumentView, type DocumentHandle } from "./DocumentView.tsx";
@@ -11,6 +11,7 @@ import { SearchPanel, type Result } from "./SearchPanel.tsx";
 import { ThreadPanel } from "./ThreadPanel.tsx";
 import { Tooltip } from "./Tooltip.tsx";
 import { drag, slideIn, slideOut, springBack } from "./pageMotion.ts";
+import { useSeenTracking } from "./seenTracking.ts";
 import { onSwipe } from "./swipe.ts";
 
 /** Changes to the open document's comments. Each resolves to whether it worked; failures are shown. */
@@ -175,6 +176,20 @@ export function App() {
     }, []);
 
     const open = (path: string) => (location.hash = hashOf(path));
+
+    // Comments count as read once they've been on screen for a moment.
+    useSeenTracking(
+        () => document.querySelector(".page > .threads"),
+        doc?.path,
+        (ids) => {
+            const path = doc!.path;
+            setDoc((d) => (d?.path === path ? markRead(d, ids) : d));
+            void api
+                .markSeen(path, ids)
+                .then(() => api.files())
+                .then(setFiles, report);
+        },
+    );
 
     /** Makes a change, showing what it returns. A failure is most likely from out of date state, so reloads. */
     const run = async (change: (path: string) => Promise<Doc | void>) => {
@@ -350,6 +365,11 @@ export function App() {
                                 open(path);
                             }}
                             onOpenFile={open}
+                            onAllRead={() => {
+                                // Documents seen before would show their comments unread until read afresh.
+                                visited.current.clear();
+                                void api.files().then(setFiles, report);
+                            }}
                             onError={report}
                         />
                     )}
@@ -454,4 +474,10 @@ function useStoredWidth(panel: string, initial: number, [min, max]: [number, num
         setWidth(clamped);
     };
     return [width, resize] as const;
+}
+
+/** `doc` with the comments `ids` read. */
+function markRead(doc: Doc, ids: string[]): Doc {
+    const read = (c: CommentView) => (c.unseen && ids.includes(c.id) ? { ...c, unseen: undefined } : c);
+    return { ...doc, threads: doc.threads.map((t) => ({ ...t, comments: t.comments.map(read) })), orphans: doc.orphans.map(read) };
 }

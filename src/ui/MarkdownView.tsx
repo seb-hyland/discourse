@@ -3,7 +3,7 @@ import { renderMarkdown, SourceIndex, useLanguagesLoaded } from "./markdown.ts";
 import type { TextViewProps } from "./textView.ts";
 
 /** Highlight names (see `::highlight()` in styles.css), lowest priority first. */
-const HIGHLIGHTS = ["highlight", "highlight-resolved", "highlight-active", "highlight-draft", "search-match", "search-match-current-match"];
+const HIGHLIGHTS = ["highlight", "highlight-resolved", "highlight-active", "highlight-draft", "unseen-thread", "search-match", "search-match-current-match"];
 
 /** The folder this window shows, whose files are served at `workspace://<folder>/`. */
 const folder = new URLSearchParams(location.search).get("folder");

@@ -4,6 +4,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { SeenStore } from "../../src/workspace/seen.ts";
 import { mergeComment, Workspace, type StoredComment } from "../../src/workspace/workspace.ts";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" });
@@ -417,4 +418,67 @@ test("allThreads lists every document's threads, open ones first, down the docum
             ["on two", "two", 2, true, 1],
         ],
     );
+});
+
+/** A thread on `a.md` by someone other than the user, its file written as theirs would arrive. */
+async function othersThread(ws: Workspace, text = "from Bob") {
+    await ws.add("a.md", { text, span: { from: 0, to: 4 } });
+    const [thread] = (await ws.view("a.md")).threads;
+    const file = join(ws.root, ".comments", "a.md", `${thread.id}.json`);
+    await writeFile(file, (await readFile(file, "utf8")).replace('"author": "Ada"', '"author": "Bob"'));
+    return thread.id;
+}
+
+test("others' comments are unread until marked read, and unread again once edited", async () => {
+    const ws = await workspace("Some text.\n");
+    const id = await othersThread(ws);
+    await ws.add("a.md", { text: "my reply", replyTo: id });
+    const unseen = async () => (await ws.view("a.md")).threads[0].comments.map((c) => c.unseen);
+    assert.deepEqual(await unseen(), ["new", undefined]);
+    assert.equal((await ws.files()).find((f) => f.path === "a.md")?.unseen, 1);
+    assert.equal((await ws.allThreads())[0].threads[0].unseen, 1);
+
+    await ws.markSeen("a.md", [id]);
+    assert.deepEqual(await unseen(), [undefined, undefined]);
+    assert.equal((await ws.files()).find((f) => f.path === "a.md")?.unseen, undefined);
+
+    const file = join(ws.root, ".comments", "a.md", `${id}.json`);
+    await writeFile(file, (await readFile(file, "utf8")).replace("from Bob", "from Bob, edited"));
+    assert.deepEqual(await unseen(), ["edited", undefined]);
+    await ws.markAllSeen();
+    assert.deepEqual(await unseen(), [undefined, undefined]);
+});
+
+test("editing someone else's comment, or giving yours to someone else, leaves it read", async () => {
+    const ws = await workspace("Some text.\n");
+    const id = await othersThread(ws);
+    await ws.update("a.md", id, { text: "from Bob, tidied up by Ada" });
+    assert.equal((await ws.view("a.md")).threads[0].comments[0].unseen, undefined);
+
+    await ws.add("a.md", { text: "by Ada", replyTo: id });
+    const reply = (await ws.view("a.md")).threads[0].comments[1].id;
+    await ws.update("a.md", reply, { author: "Carol" });
+    assert.equal((await ws.view("a.md")).threads[0].comments[1].unseen, undefined);
+});
+
+test("a read comment that's deleted and comes back is still read", async () => {
+    const ws = await workspace("Some text.\n");
+    const id = await othersThread(ws);
+    await ws.markSeen("a.md", [id]);
+    await ws.remove("a.md", id);
+    await ws.undo("a.md", "undo");
+    assert.equal((await ws.view("a.md")).threads[0].comments[0].unseen, undefined);
+});
+
+test("on first opening a folder, others' comments are all unread, and what's read is kept", async () => {
+    const file = join(await mkdtemp(join(tmpdir(), "seen-")), "seen.json");
+    const store = await SeenStore.open(file);
+    assert.equal(store.status("a", "text"), "new");
+    store.mark([{ id: "a", text: "text" }]);
+    store.flush();
+
+    const reopened = await SeenStore.open(file);
+    assert.equal(reopened.status("a", "text"), undefined);
+    assert.equal(reopened.status("a", "changed"), "edited");
+    assert.equal(reopened.status("b", "text"), "new");
 });
