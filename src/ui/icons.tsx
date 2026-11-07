@@ -37,6 +37,8 @@ export const SearchIcon = () => (
         <circle cx="11" cy="11" r="8" />
     </Icon>
 );
+export const FileIcon = () => <Icon d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7" />;
+export const OptionsIcon = () => <Icon d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />;
 export const SidebarIcon = () => <Icon d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18" />;
 
 /** An icon button, with an instant tooltip (see Tooltip). `on` makes it a toggle. */

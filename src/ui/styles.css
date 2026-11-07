@@ -209,14 +209,6 @@ main > .loading {
     padding: 0.5rem;
 }
 
-/* Finding a file, under the files and above the footer's line. */
-.files .filter {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.25rem 0.5rem 0.5rem;
-}
-
 /* Hiding the sidebar, back, forward, search and settings. */
 .files footer {
     display: flex;
@@ -227,20 +219,6 @@ main > .loading {
 
 .files footer .spacer {
     flex: 1;
-}
-
-/* Close to the height of the icon beside it, rather than its button. */
-.files .filter input {
-    flex: 1;
-    min-width: 0;
-    height: 20px;
-    padding: 0 0.4rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: inherit;
-    font: inherit;
-    font-size: 12.5px;
 }
 
 /* Above the files, showing every thread when chosen. */
@@ -402,16 +380,33 @@ main > .loading {
 
 .search header {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem 0.75rem;
-    align-items: center;
+    flex-direction: column;
+    gap: 0.5rem;
     padding: 0.5rem;
     border-bottom: 1px solid var(--border);
 }
 
+.search header .bar {
+    display: flex;
+    gap: 0.2rem;
+    align-items: center;
+}
+
+/* Room between the count and the query, and the buttons after it. */
+.search header .bar .status {
+    margin: 0 0.4rem;
+}
+
+.search header .options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    align-items: center;
+}
+
 .search header input {
     flex: 1;
-    min-width: 10rem;
+    min-width: 6rem;
     padding: 0.3rem 0.5rem;
     border: 1px solid var(--border);
     border-radius: 6px;

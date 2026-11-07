@@ -29,13 +29,12 @@ export function FileTree({
     searching: boolean;
     onSettings: () => void;
 }) {
-    const [filter, setFilter] = useState("");
     const [commentedOnly, setCommentedOnly] = useState(false);
     const [collapsed, setCollapsed] = useStored("files.collapsed", false);
     const { canGoBack, canGoForward } = useHistory();
     const openThreads = files.reduce((n, f) => n + f.openThreads, 0);
     const unseen = files.reduce((n, f) => n + (f.unseen ?? 0), 0);
-    const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()) && (!commentedOnly || f.openThreads + f.resolvedThreads > 0));
+    const shown = files.filter((f) => !commentedOnly || f.openThreads + f.resolvedThreads > 0);
 
     return (
         <nav className={collapsed ? "files collapsed" : "files"}>
@@ -48,14 +47,6 @@ export function FileTree({
                     </button>
                     <hr className="divider" />
                     <FolderContents folder={buildTree(shown)} current={current} onOpen={onOpen} />
-                </div>
-            )}
-            {!collapsed && (
-                <div className="filter">
-                    <input placeholder="Find a file…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-                    <IconButton tip="Only show commented files" on={commentedOnly} onClick={() => setCommentedOnly(!commentedOnly)}>
-                        <CommentIcon />
-                    </IconButton>
                 </div>
             )}
             <footer>
@@ -73,6 +64,9 @@ export function FileTree({
                         <span className="spacer" />
                         <IconButton tip="Search (⌘F)" on={searching} onClick={onSearch}>
                             <SearchIcon />
+                        </IconButton>
+                        <IconButton tip="Only show commented files" on={commentedOnly} onClick={() => setCommentedOnly(!commentedOnly)}>
+                            <CommentIcon />
                         </IconButton>
                         <IconButton tip="Settings" onClick={onSettings}>
                             <SettingsIcon />

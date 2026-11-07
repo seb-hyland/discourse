@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import type { CommentMatch, DocumentView as Doc, FileMatch, Scope, Span } from "../shared/api.ts";
 import { findAll, preview, type Preview } from "../shared/search.ts";
 import { api } from "./api.ts";
-import { ChevronDownIcon, ChevronIcon, ChevronUpIcon, CloseIcon, CommentIcon, IconButton } from "./icons.tsx";
+import { ChevronDownIcon, ChevronIcon, ChevronUpIcon, CloseIcon, CommentIcon, FileIcon, IconButton, OptionsIcon } from "./icons.tsx";
 import { useStored } from "./util.ts";
 
-/** A match to show: text in a file, or a comment. */
-export type Result = ({ kind: "file" } & FileMatch) | ({ kind: "comment" } & CommentMatch);
+/** A match to show: a file's name, text in a file, or a comment. */
+export type Result = { kind: "name"; path: string; preview: Preview } | ({ kind: "file" } & FileMatch) | ({ kind: "comment" } & CommentMatch);
 
 /** How long typing must pause before the whole folder is searched. */
 const SEARCH_DELAY_MS = 150;
@@ -15,7 +15,10 @@ const CURRENT_LIMIT = 1000;
 /** The panel's height to start with, its least, and its most as a share of the window's. */
 const HEIGHT: [number, number, number] = [240, 120, 0.7];
 
-const key = (r: Result) => (r.kind === "file" ? `f:${r.path}:${r.span.from}` : `c:${r.path}:${r.id}`);
+/** A match in a file's text or comments, rather than its name. */
+type Found = Exclude<Result, { kind: "name" }>;
+
+const key = (r: Result) => (r.kind === "name" ? `n:${r.path}` : r.kind === "file" ? `f:${r.path}:${r.span.from}` : `c:${r.path}:${r.id}`);
 
 /**
  * A panel along the bottom for searching the open document's text and comments, or the whole
@@ -23,6 +26,7 @@ const key = (r: Result) => (r.kind === "file" ? `f:${r.path}:${r.span.from}` : `
  */
 export function SearchPanel({
     doc,
+    paths,
     version,
     focus,
     onGo,
@@ -30,6 +34,8 @@ export function SearchPanel({
     onClose,
 }: {
     doc: Doc | null;
+    /** Every file's path, to search their names. */
+    paths: string[];
     /** Changes whenever files change on disk, to search again. */
     version: number;
     /** Changes to ask for the query box to be focused, with text to search for if any. */
@@ -41,7 +47,9 @@ export function SearchPanel({
     const [query, setQuery] = useState("");
     const [files, setFiles] = useStored<Scope>("search.files", "current");
     const [comments, setComments] = useStored<Scope>("search.comments", "current");
-    const [elsewhere, setElsewhere] = useState<{ results: Result[]; truncated: boolean }>({ results: [], truncated: false });
+    const [names, setNames] = useStored("search.names", false);
+    const [showOptions, setShowOptions] = useStored("search.showOptions", false);
+    const [elsewhere, setElsewhere] = useState<{ results: Found[]; truncated: boolean }>({ results: [], truncated: false });
     const [selected, setSelected] = useState<string | null>(null);
     const [height, setStoredHeight] = useStored("height.search", HEIGHT[0]);
     const setHeight = (to: number) => setStoredHeight(Math.round(Math.min(innerHeight * HEIGHT[2], Math.max(HEIGHT[1], to))));
@@ -55,17 +63,17 @@ export function SearchPanel({
     }, [focus]);
 
     // The open document is searched here, as it's shown; other files by the main process.
-    const here = useMemo((): Result[] => {
+    const here = useMemo((): Found[] => {
         if (!doc || !query) return [];
-        const inText: Result[] =
+        const inText: Found[] =
             files === "none"
                 ? []
                 : findAll(doc.text, query, CURRENT_LIMIT).map((span) => ({ kind: "file", path: doc.path, span, preview: preview(doc.text, span) }));
-        const inComments: Result[] =
+        const inComments: Found[] =
             comments === "none"
                 ? []
                 : doc.threads.flatMap((thread) =>
-                      thread.comments.flatMap((c): Result[] => {
+                      thread.comments.flatMap((c): Found[] => {
                           const [span] = findAll(c.text, query, 1);
                           return span
                               ? [{ kind: "comment", path: doc.path, id: c.id, thread: thread.id, author: c.author, preview: preview(c.text, span) }]
@@ -85,7 +93,7 @@ export function SearchPanel({
         const timer = setTimeout(async () => {
             const found = await api.search(query, within).catch(() => null);
             if (request !== latest.current || !found) return;
-            const results: Result[] = [
+            const results: Found[] = [
                 ...found.files.map((m) => ({ kind: "file" as const, ...m })),
                 ...found.comments.map((m) => ({ kind: "comment" as const, ...m })),
             ];
@@ -94,14 +102,25 @@ export function SearchPanel({
         return () => clearTimeout(timer);
     }, [query, files, comments, version, !doc]);
 
+    /** Files whose paths match, by path, shown before everything else. */
+    const named = useMemo((): Result[] => {
+        if (!names || !query) return [];
+        return [...paths].sort().flatMap((path) => {
+            const [span] = findAll(path, query, 1);
+            if (!span) return [];
+            const shown = { line: 1, before: path.slice(0, span.from), match: path.slice(span.from, span.to), after: path.slice(span.to) };
+            return [{ kind: "name" as const, path, preview: shown }];
+        });
+    }, [names, query, paths]);
+
     /** All results, by file in order of path, which stays put as results are gone to so stepping goes through them all. */
     const groups = useMemo(() => {
-        const byPath = new Map<string, Result[]>();
+        const byPath = new Map<string, Found[]>();
         // The open document's matches are its own, as shown, rather than the main process's.
         for (const r of [...here, ...elsewhere.results.filter((r) => r.path !== doc?.path)]) byPath.set(r.path, [...(byPath.get(r.path) ?? []), r]);
         return [...byPath].sort(([a], [b]) => a.localeCompare(b));
     }, [here, elsewhere, doc?.path]);
-    const results = useMemo(() => groups.flatMap(([, rs]) => rs), [groups]);
+    const results = useMemo(() => [...named, ...groups.flatMap(([, rs]) => rs)], [named, groups]);
     const index = results.findIndex((r) => key(r) === selected);
 
     useEffect(() => {
@@ -159,7 +178,7 @@ export function SearchPanel({
 
     const status = !query
         ? null
-        : files === "none" && comments === "none"
+        : !names && files === "none" && comments === "none"
           ? "Choose what to search"
           : results.length === 0
             ? "No matches"
@@ -168,22 +187,74 @@ export function SearchPanel({
     return (
         <section className="search" style={{ height }} onKeyDown={(e) => e.key === "Escape" && onClose()}>
             <div className="resize-handle search-edge" onPointerDown={startResize} />
+            {/* The query and stepping through what it finds, with what to search in a row below, when wanted. */}
             <header>
-                <input ref={input} placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onKeyDown} spellCheck={false} />
-                <ScopePicker label="Files" value={files} onChange={setFiles} />
-                <ScopePicker label="Comments" value={comments} onChange={setComments} />
-                <span className="status">{status}</span>
-                <IconButton tip="Previous match (⇧⌘G)" disabled={!results.length} onClick={() => step(-1)}>
-                    <ChevronUpIcon />
-                </IconButton>
-                <IconButton tip="Next match (⌘G)" disabled={!results.length} onClick={() => step(1)}>
-                    <ChevronDownIcon />
-                </IconButton>
-                <IconButton tip="Close (Esc)" onClick={onClose}>
-                    <CloseIcon />
-                </IconButton>
+                <div className="bar">
+                    <input
+                        ref={input}
+                        placeholder="Search…"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        onKeyDown={onKeyDown}
+                        spellCheck={false}
+                    />
+                    <span className="status">{status}</span>
+                    <IconButton tip="What to search" on={showOptions} onClick={() => setShowOptions(!showOptions)}>
+                        <OptionsIcon />
+                    </IconButton>
+                    <IconButton tip="Previous match (⇧⌘G)" disabled={!results.length} onClick={() => step(-1)}>
+                        <ChevronUpIcon />
+                    </IconButton>
+                    <IconButton tip="Next match (⌘G)" disabled={!results.length} onClick={() => step(1)}>
+                        <ChevronDownIcon />
+                    </IconButton>
+                    <IconButton tip="Close (Esc)" onClick={onClose}>
+                        <CloseIcon />
+                    </IconButton>
+                </div>
+                {showOptions && (
+                    <div className="options">
+                        <div className="scope" role="radiogroup" aria-label="Filenames">
+                            <span className="label">Filenames</span>
+                            {[false, true].map((on) => (
+                                <button
+                                    key={String(on)}
+                                    role="radio"
+                                    aria-checked={names === on}
+                                    className={names === on ? "on" : undefined}
+                                    onClick={() => setNames(on)}
+                                >
+                                    {on ? "On" : "Off"}
+                                </button>
+                            ))}
+                        </div>
+                        <ScopePicker label="Files" value={files} onChange={setFiles} />
+                        <ScopePicker label="Comments" value={comments} onChange={setComments} />
+                    </div>
+                )}
             </header>
             <div className="results" ref={list}>
+                {named.length > 0 && (
+                    <details open>
+                        <summary>
+                            <ChevronIcon />
+                            <span className="name">Filenames</span>
+                            <span className="count">{named.length}</span>
+                        </summary>
+                        <ul>
+                            {named.map((r) => (
+                                <li key={key(r)}>
+                                    <button className={key(r) === selected ? "current" : undefined} data-result={key(r)} onClick={() => go(r)}>
+                                        <span className="where">
+                                            <FileIcon />
+                                        </span>
+                                        <PreviewText preview={r.preview} />
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </details>
+                )}
                 {groups.map(([path, rs]) => (
                     <details key={path} open>
                         <summary>

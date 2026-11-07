@@ -339,9 +339,10 @@ export function App() {
         return () => removeEventListener("keydown", onKey);
     }, [selection, doc]);
 
-    /** Shows a search result: a match in a document's text, or a comment. */
+    /** Shows a search result: a file whose name matches, a match in a document's text, or a comment. */
     const goToResult = (r: Result) => {
-        if (r.kind === "comment") {
+        if (r.kind === "name") open(r.path);
+        else if (r.kind === "comment") {
             setLinked(r.id);
             if (r.path !== doc?.path) open(r.path);
         } else if (r.path === doc?.path) documentView.current?.reveal(r.span);
@@ -462,6 +463,7 @@ export function App() {
                     {searching && (
                         <SearchPanel
                             doc={doc}
+                            paths={files.map((f) => f.path)}
                             version={version}
                             focus={searching}
                             onGo={goToResult}
