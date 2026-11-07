@@ -9,6 +9,8 @@ interface Folder {
     files: FileSummary[];
     openThreads: number;
     unseen: number;
+    /** How many files inside need attention. */
+    attention: number;
 }
 
 export function FileTree({
@@ -101,7 +103,12 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
                         <summary>
                             <ChevronIcon />
                             <span className="name">{sub.name}</span>
-                            <Count open={sub.openThreads} unseen={sub.unseen} />
+                            {/* Shown only while the folder is folded, by the stylesheet. */}
+                            <Count
+                                open={sub.openThreads}
+                                unseen={sub.unseen}
+                                attention={sub.attention ? `${sub.attention} ${sub.attention === 1 ? "file needs" : "files need"} attention` : undefined}
+                            />
                         </summary>
                         <FolderContents folder={sub} current={current} onOpen={onOpen} />
                     </details>
@@ -116,13 +123,7 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
                         >
                             {f.path.slice(f.path.lastIndexOf("/") + 1)}
                         </span>
-                        {f.attention ? (
-                            <span className="count broken" data-tip={f.attention}>
-                                !
-                            </span>
-                        ) : (
-                            <Count open={f.openThreads} unseen={f.unseen ?? 0} />
-                        )}
+                        <Count open={f.openThreads} unseen={f.unseen ?? 0} attention={f.attention} />
                     </button>
                 </li>
             ))}
@@ -141,6 +142,7 @@ function buildTree(files: FileSummary[]): Folder {
             at = at.folders.get(name)!;
             at.openThreads += file.openThreads;
             at.unseen += file.unseen ?? 0;
+            if (file.attention) at.attention++;
         }
         at.files.push(file);
     }
@@ -156,19 +158,21 @@ function compact(f: Folder): Folder {
 }
 
 function folder(name: string): Folder {
-    return { name, folders: new Map(), files: [], openThreads: 0, unseen: 0 };
+    return { name, folders: new Map(), files: [], openThreads: 0, unseen: 0, attention: 0 };
 }
 
 /**
  * How many open threads a file or folder has, picked out if the user has comments in it to read.
  * With only resolved threads to read, a dot says so instead.
  */
-function Count({ open, unseen }: { open: number; unseen: number }) {
-    const tip = unseen === 0 ? undefined : unseen === 1 ? "1 unread comment" : `${unseen} unread comments`;
-    if (open > 0)
+/** Open threads, coloured if any are unread, or red if something needs settling; "!" if that's all there is. */
+function Count({ open, unseen, attention }: { open: number; unseen: number; attention?: string }) {
+    const unread = unseen === 0 ? undefined : unseen === 1 ? "1 unread comment" : `${unseen} unread comments`;
+    const tip = [attention, unread].filter(Boolean).join(" · ") || undefined;
+    if (open > 0 || attention)
         return (
-            <span className={unseen ? "count unread" : "count"} data-tip={tip}>
-                {open}
+            <span className={attention ? "count broken" : unseen ? "count unread" : "count"} data-tip={tip}>
+                {open || "!"}
             </span>
         );
     return unseen > 0 && <span className="unread-dot" data-tip={tip} />;

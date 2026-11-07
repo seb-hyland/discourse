@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,31 +7,8 @@ import { test } from "node:test";
 import { SeenStore, versionOf } from "../../src/workspace/seen.ts";
 import type { ConflictVersion } from "../../src/shared/api.ts";
 import { mergeComment, Workspace, type StoredComment } from "../../src/workspace/workspace.ts";
+import { addThread, committedThread, edit, git, workspace } from "./repo.ts";
 
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" });
-
-/** A repository with `a.md`, optionally committed and pushed to a remote. */
-async function workspace(text: string, { pushed = false } = {}) {
-    const root = await mkdtemp(join(tmpdir(), "workspace-"));
-    git(root, "init", "-q", "-b", "main");
-    git(root, "config", "user.name", "Ada");
-    git(root, "config", "user.email", "ada@example.com");
-    await writeFile(join(root, "a.md"), text);
-    if (pushed) {
-        const remote = await mkdtemp(join(tmpdir(), "remote-"));
-        git(remote, "init", "-q", "--bare");
-        git(root, "remote", "add", "origin", remote);
-        git(root, "add", ".");
-        git(root, "commit", "-q", "-m", "a");
-        git(root, "push", "-q", "origin", "main");
-    }
-    return Workspace.open(root);
-}
-
-const edit = (ws: Workspace, text: string) => writeFile(join(ws.root, "a.md"), text);
-/** Starts a thread on `span` of a.md as it is now. */
-const addThread = async (ws: Workspace, text: string, span: { from: number; to: number }) =>
-    ws.add("a.md", { text, span, quote: (await readFile(join(ws.root, "a.md"), "utf8")).slice(span.from, span.to) });
 const commentFiles = (ws: Workspace) => readdir(join(ws.root, ".comments", "a.md")).catch(() => []);
 const placed = async (ws: Workspace) => {
     const { text, threads } = await ws.view("a.md");
@@ -133,7 +109,7 @@ test("a deleted file's comments can still be read", async () => {
     const ws = await workspace("text\n");
     await assert.rejects(ws.view("b.md"), /b\.md doesn't exist\./);
     await addThread(ws, "first", { from: 0, to: 4 });
-    execFileSync("rm", [join(ws.root, "a.md")]);
+    await rm(join(ws.root, "a.md"));
     const view = await ws.view("a.md");
     assert.deepEqual([view.missing, view.threads[0].span], [true, null]);
     assert.equal((await ws.files()).find((f) => f.path === "a.md")?.missing, true);
@@ -505,15 +481,6 @@ test("on first opening a folder, others' comments are all unread, and what's rea
 });
 
 /** a.md with a thread on "quick", committed on main. */
-async function committedThread() {
-    const ws = await workspace("Intro.\n\nThe quick brown fox.\n");
-    await addThread(ws, "first", { from: 12, to: 17 });
-    const [{ id }] = (await ws.view("a.md")).threads;
-    git(ws.root, "add", ".");
-    git(ws.root, "commit", "-q", "-m", "base");
-    return { ws, id };
-}
-
 test("a thread deleted on one side and only moved by the app on the other is deleted, without asking", async () => {
     const { ws, id } = await committedThread();
     git(ws.root, "checkout", "-q", "-b", "b");

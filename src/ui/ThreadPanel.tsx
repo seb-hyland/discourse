@@ -6,6 +6,7 @@ import { DateField } from "./DateField.tsx";
 import { CheckIcon, DeleteIcon, DiffIcon, EditIcon, ExternalIcon, IconButton, LinkIcon, MoveIcon, ReplyIcon } from "./icons.tsx";
 import { Markdown, MarkdownEditor } from "./Markdown.tsx";
 import { TypeField } from "./TypeField.tsx";
+import { conflictChoices } from "./conflicts.ts";
 import { classes, formatDay, useStored } from "./util.ts";
 
 /** Text written in composers and not yet sent, by what it's for, kept while the window is open. */
@@ -102,22 +103,8 @@ export function ThreadPanel({
 function ConflictVersions({ conflict, actions }: { conflict: Conflict; actions: Actions }) {
     const { versions, sides } = conflict;
     const [diffing, setDiffing] = useStored("conflicts.diff", false);
-    const kept = versions.filter((v) => typeof v === "object" && v !== null);
-    const quotes = new Set(kept.map((v) => v.quote).filter(Boolean));
-    const replies = conflict.replies === 1 ? "its reply" : `its ${conflict.replies} replies`;
-    const what = conflict.thread ? "reply" : "comment";
-    const [first, second] = versions;
-    const both = typeof first === "object" && first && typeof second === "object" && second && first.text !== second.text ? [first, second] : null;
-    const keep = (i: number) => (
-        <button key={i} className={`side-${i}`} onClick={() => void actions.resolveConflict(conflict.id, i)}>
-            {versions[i] ? `Keep ${sides[i].label}` : `Keep it deleted (${sides[i].label})${conflict.replies ? `, with ${replies}` : ""}`}
-        </button>
-    );
-    const keepBoth = (
-        <button onClick={() => void actions.resolveConflict(conflict.id, "both")} data-tip={`Keeps ${sides[0].label}, with ${sides[1].label} as a reply`}>
-            Keep both
-        </button>
-    );
+    const { heading, choices, both } = conflictChoices(conflict);
+    const quotes = new Set(versions.map((v) => typeof v === "object" && v?.quote).filter(Boolean));
     const side = (i: number) => (
         <p className="side">
             <strong>{sides[i].label}</strong>
@@ -127,13 +114,7 @@ function ConflictVersions({ conflict, actions }: { conflict: Conflict; actions: 
     return (
         <div className="conflict">
             <p className="original conflict-heading">
-                <span>
-                    {versions.includes("unreadable")
-                        ? `One side's version of this ${what} isn't a valid comment.`
-                        : versions.includes(null)
-                          ? `One side deleted this ${what} and the other changed it.`
-                          : `Both sides changed this ${what}.`}
-                </span>
+                <span>{heading}</span>
                 {both && (
                     <IconButton tip={diffing ? "Show each version" : "Show what differs"} on={diffing} onClick={() => setDiffing(!diffing)}>
                         <DiffIcon />
@@ -195,9 +176,16 @@ function ConflictVersions({ conflict, actions }: { conflict: Conflict; actions: 
                 ))
             )}
             <div className={classes("actions", both && diffing && "keyed")}>
-                {versions.map((version, i) => version !== "unreadable" && keep(i))}
-                {both && keepBoth}
-                {versions.includes("unreadable") && <button onClick={() => void actions.openCommentFile(conflict.file)}>Open in editor</button>}
+                {choices.map(({ label, choice, tip }) => (
+                    <button
+                        key={label}
+                        className={typeof choice === "number" ? `side-${choice}` : undefined}
+                        data-tip={tip}
+                        onClick={() => void (choice === "edit" ? actions.openCommentFile(conflict.file) : actions.resolveConflict(conflict.id, choice))}
+                    >
+                        {label}
+                    </button>
+                ))}
             </div>
         </div>
     );

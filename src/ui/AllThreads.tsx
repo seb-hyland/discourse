@@ -62,7 +62,12 @@ export function AllThreads({
                         <span className="totals">
                             {" "}
                             · {open} open · {threads.length - open} resolved
-                            {unread > 0 && <> · {unread} unread</>}
+                            {unread > 0 && (
+                                <>
+                                    {" "}
+                                    · {unread} unread {unread === 1 ? "comment" : "comments"}
+                                </>
+                            )}
                         </span>
                     )}
                     <span className="header-buttons">
@@ -121,8 +126,8 @@ export function AllThreads({
                             >
                                 {path}
                             </button>
-                            <span className="count">{threads.filter((t) => !t.resolved).length || ""}</span>
                             {missing && <span className="deleted">deleted</span>}
+                            <span className="count">{threads.filter((t) => !t.resolved).length || ""}</span>
                         </summary>
                         {issues.length > 0 && (
                             <button className="thread summary issues" onClick={() => onOpenFile(path)}>
@@ -145,7 +150,7 @@ function ThreadCard({ thread, onOpen }: { thread: ThreadSummary; onOpen: () => v
     return (
         // Not a <button>, which can't hold the links a comment may have.
         <article
-            className={classes("thread summary", thread.resolved && "resolved", !!thread.unseen && "unseen")}
+            className={classes("thread summary", thread.resolved && "resolved", !!thread.unseen && "unseen", thread.attention && "attention")}
             role="button"
             tabIndex={0}
             onClick={(e) => {
@@ -163,7 +168,12 @@ function ThreadCard({ thread, onOpen }: { thread: ThreadSummary; onOpen: () => v
             {thread.replies > 0 && (
                 <p className="replies">
                     {thread.replies} {thread.replies === 1 ? "reply" : "replies"}
-                    {repliesUnread > 0 && <span className="unread-count"> · {repliesUnread} unread</span>}
+                    {repliesUnread > 0 && (
+                        <span className="unread-count">
+                            {" "}
+                            · {repliesUnread} unread {repliesUnread === 1 ? "reply" : "replies"}
+                        </span>
+                    )}
                 </p>
             )}
         </article>

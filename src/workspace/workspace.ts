@@ -169,7 +169,7 @@ export class Workspace {
                 openThreads: open,
                 resolvedThreads: roots.length + conflictedRoots - open,
                 missing: (loaded && !loaded.content) || undefined,
-                attention: loaded ? issues(loaded, true, await this.place(loaded)).join(" · ") || undefined : "Its comments can't be read",
+                attention: loaded ? issues(loaded, await this.place(loaded)).join(" · ") || undefined : "Its comments can't be read",
                 unseen: unseen || undefined,
             });
         }
@@ -183,7 +183,8 @@ export class Workspace {
             const loaded = await this.load(path).catch(() => null);
             if (!loaded) continue;
             const view = await this.toView(loaded);
-            const found = issues(loaded, false);
+            // The same as the file tree's badge says, so the two agree.
+            const found = issues(loaded, await this.place(loaded));
             if (view.threads.length === 0 && found.length === 0) continue;
             const threads = view.threads.map((t): ThreadSummary => ({
                 id: t.id,
@@ -195,7 +196,7 @@ export class Workspace {
                 first: t.comments[0],
                 replies: t.comments.length - 1,
                 unseen: t.comments.filter((c) => c.unseen).length || undefined,
-                attention: !!t.lost || !!t.conflict || undefined,
+                attention: (!!t.lost && t.lost !== "deleted") || !!t.conflict || undefined,
             }));
             documents.push({ path, missing: view.missing, threads, issues: found });
         }
@@ -867,12 +868,12 @@ export function mergeComment(base: StoredComment | null, ours: StoredComment | n
 }
 
 /**
- * What needs attention in a document's comments, such as "1 comment conflict to settle"; with
- * `all`, threads' conflicts too, and given `places`, threads that can't be placed.
+ * What needs attention in a document's comments, such as "1 comment conflict to settle"; given
+ * `places`, threads that can't be placed too.
  */
-function issues(loaded: Loaded, all = true, places?: Places): string[] {
+function issues(loaded: Loaded, places?: Places): string[] {
     const count = (n: number, one: string, many: string) => (n ? [`${n} ${n === 1 ? one : many}`] : []);
-    const conflicted = [...loaded.conflicts.values()].filter(({ versions }) => all || !versions.some(startsThread)).length;
+    const conflicted = loaded.conflicts.size;
     const orphans = [...loaded.comments.values()].filter((c) => !c.anchor && missingParent(loaded, c)).length;
     return [
         ...count(conflicted, "comment conflict to settle", "comment conflicts to settle"),
