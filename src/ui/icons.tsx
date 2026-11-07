@@ -20,6 +20,7 @@ export const LinkIcon = () => (
     <Icon d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
 );
 export const ExternalIcon = () => <Icon d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" />;
+export const DiffIcon = () => <Icon d="M12 3v14M5 10h14M5 21h14" />;
 export const CloseIcon = () => <Icon d="M18 6 6 18M6 6l12 12" />;
 export const BackIcon = () => <Icon d="M19 12H5M12 19l-7-7 7-7" />;
 export const ForwardIcon = () => <Icon d="M5 12h14M12 5l7 7-7 7" />;

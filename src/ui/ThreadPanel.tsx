@@ -1,12 +1,12 @@
 import { diffWords } from "diff";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CommentUpdate, CommentView, Conflict, DocumentView, Lost, Selection, ThreadView } from "../shared/api.ts";
 import type { Actions } from "./App.tsx";
 import { DateField } from "./DateField.tsx";
-import { CheckIcon, DeleteIcon, EditIcon, ExternalIcon, IconButton, LinkIcon, MoveIcon, ReplyIcon } from "./icons.tsx";
+import { CheckIcon, DeleteIcon, DiffIcon, EditIcon, ExternalIcon, IconButton, LinkIcon, MoveIcon, ReplyIcon } from "./icons.tsx";
 import { Markdown, MarkdownEditor } from "./Markdown.tsx";
 import { TypeField } from "./TypeField.tsx";
-import { classes, formatDay } from "./util.ts";
+import { classes, formatDay, useStored } from "./util.ts";
 
 /** Text written in composers and not yet sent, by what it's for, kept while the window is open. */
 const unsent = new Map<string, string>();
@@ -101,29 +101,86 @@ export function ThreadPanel({
 /** Each side's version of a comment two branches changed differently, to keep one, or both. */
 function ConflictVersions({ conflict, actions }: { conflict: Conflict; actions: Actions }) {
     const { versions, sides } = conflict;
+    const [diffing, setDiffing] = useStored("conflicts.diff", false);
     const kept = versions.filter((v) => typeof v === "object" && v !== null);
     const quotes = new Set(kept.map((v) => v.quote).filter(Boolean));
     const replies = conflict.replies === 1 ? "its reply" : `its ${conflict.replies} replies`;
+    const what = conflict.thread ? "reply" : "comment";
     const [first, second] = versions;
     const both = typeof first === "object" && first && typeof second === "object" && second && first.text !== second.text ? [first, second] : null;
+    const keep = (i: number) => (
+        <button key={i} className={`side-${i}`} onClick={() => void actions.resolveConflict(conflict.id, i)}>
+            {versions[i] ? `Keep ${sides[i].label}` : `Keep it deleted (${sides[i].label})${conflict.replies ? `, with ${replies}` : ""}`}
+        </button>
+    );
+    const keepBoth = (
+        <button onClick={() => void actions.resolveConflict(conflict.id, "both")} data-tip={`Keeps ${sides[0].label}, with ${sides[1].label} as a reply`}>
+            Keep both
+        </button>
+    );
+    const side = (i: number) => (
+        <p className="side">
+            <strong>{sides[i].label}</strong>
+            {sides[i].commit && ` · ${sides[i].commit!.author}: ${sides[i].commit!.subject}`}
+        </p>
+    );
     return (
-        <>
-            <p className="original">
-                {versions.includes("unreadable")
-                    ? "One side's version of this comment isn't a valid comment."
-                    : versions.includes(null)
-                      ? "One side deleted this comment and the other changed it."
-                      : "Both sides changed this comment."}{" "}
-                Keep one version:
+        <div className="conflict">
+            <p className="original conflict-heading">
+                <span>
+                    {versions.includes("unreadable")
+                        ? `One side's version of this ${what} isn't a valid comment.`
+                        : versions.includes(null)
+                          ? `One side deleted this ${what} and the other changed it.`
+                          : `Both sides changed this ${what}.`}
+                </span>
+                {both && (
+                    <IconButton tip={diffing ? "Show each version" : "Show what differs"} on={diffing} onClick={() => setDiffing(!diffing)}>
+                        <DiffIcon />
+                    </IconButton>
+                )}
             </p>
-            {versions.map((version, i) => {
-                const { label, commit } = sides[i];
-                return (
-                    <div key={i} className="version">
-                        <p className="side">
-                            <strong>{label}</strong>
-                            {commit && ` · ${commit.author}: ${commit.subject}`}
+            {both && diffing ? (
+                <>
+                    <div className="comment">
+                        <CommentHeader comment={both[0]} />
+                        <p className="diff">
+                            {diffWords(both[0].text, both[1].text).map((part, i, parts) => {
+                                if (!part.added && !part.removed) return part.value;
+                                // Spaces either side stay unmarked; a replacement is kept apart from what it replaces.
+                                const [, before, words, after] = part.value.match(/^(\s*)([\s\S]*?)(\s*)$/)!;
+                                const replacing = part.added && parts[i - 1]?.removed && !before && !/\s$/.test(parts[i - 1].value);
+                                return (
+                                    <Fragment key={i}>
+                                        {replacing ? " " : before}
+                                        <span className={part.removed ? "side-0" : "side-1"}>{words}</span>
+                                        {after}
+                                    </Fragment>
+                                );
+                            })}
                         </p>
+                    </div>
+                    {both.map(
+                        (v, i) =>
+                            v.resolved !== both[1 - i].resolved &&
+                            v.resolved && (
+                                <p key={i} className="original">
+                                    {sides[i].label} also resolved it.
+                                </p>
+                            ),
+                    )}
+                    <div className="legend">
+                        {[0, 1].map((i) => (
+                            <div key={i} className={`side-${i}`}>
+                                {side(i)}
+                            </div>
+                        ))}
+                    </div>
+                </>
+            ) : (
+                versions.map((version, i) => (
+                    <div key={i} className="version">
+                        {side(i)}
                         {version === "unreadable" ? (
                             <p className="original">Not a valid comment.</p>
                         ) : version ? (
@@ -134,42 +191,15 @@ function ConflictVersions({ conflict, actions }: { conflict: Conflict; actions: 
                         ) : (
                             <p className="original">Deleted</p>
                         )}
-                        {version !== "unreadable" && (
-                            <div className="actions">
-                                <button onClick={() => void actions.resolveConflict(conflict.id, i)}>
-                                    {version ? `Keep ${label}` : `Keep it deleted (${label})${conflict.replies ? `, with ${replies}` : ""}`}
-                                </button>
-                            </div>
-                        )}
                     </div>
-                );
-            })}
-            {both && (
-                <div className="version">
-                    <p className="side">
-                        <strong>What differs</strong> · <del>{sides[0].label}</del> <ins>{sides[1].label}</ins>
-                    </p>
-                    <p className="diff">
-                        {diffWords(both[0].text, both[1].text).map((part, i) =>
-                            part.removed ? <del key={i}>{part.value}</del> : part.added ? <ins key={i}>{part.value}</ins> : part.value,
-                        )}
-                    </p>
-                    <div className="actions">
-                        <button
-                            onClick={() => void actions.resolveConflict(conflict.id, "both")}
-                            data-tip={`Keeps ${sides[0].label}, with ${sides[1].label} as a reply`}
-                        >
-                            Keep both
-                        </button>
-                    </div>
-                </div>
+                ))
             )}
-            {versions.includes("unreadable") && (
-                <div className="actions">
-                    <button onClick={() => void actions.openCommentFile(conflict.file)}>Open in editor</button>
-                </div>
-            )}
-        </>
+            <div className={classes("actions", both && diffing && "keyed")}>
+                {versions.map((version, i) => version !== "unreadable" && keep(i))}
+                {both && keepBoth}
+                {versions.includes("unreadable") && <button onClick={() => void actions.openCommentFile(conflict.file)}>Open in editor</button>}
+            </div>
+        </div>
     );
 }
 
@@ -286,9 +316,7 @@ function Thread({
                         <Comment path={path} comment={first} first onReply={() => setReplying(true)} actions={actions} />
                     )}
                     {conflicts.map((conflict) => (
-                        <div key={conflict.id} className="reply-conflict">
-                            <ConflictVersions conflict={conflict} actions={actions} />
-                        </div>
+                        <ConflictVersions key={conflict.id} conflict={conflict} actions={actions} />
                     ))}
                     <Replies path={path} comments={rest} marked={marked} actions={actions} />
                     {replying && (

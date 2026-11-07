@@ -1000,13 +1000,6 @@ button.thread.summary.issues {
     border-color: var(--error);
 }
 
-/* A reply in conflict, set off within its thread. */
-.thread .reply-conflict {
-    margin: 0.75rem 0 0.75rem 0.25rem;
-    padding-left: 0.75rem;
-    border-left: 2px solid var(--error);
-}
-
 .thread .side {
     margin: 0 0 0.25rem;
     font-size: 12px;
@@ -1017,33 +1010,92 @@ button.thread.summary.issues {
     margin-bottom: 0.25rem;
 }
 
-.thread .version {
+/* A conflict, set off from the thread around it: what it is, each version, then the choice. */
+.thread .conflict {
+    margin: 0.5rem 0 0.75rem;
+    padding: 0.6rem 0;
+    border-block: 1px solid var(--border);
+}
+
+/* A conflict that is a card of its own has the card's edges instead. */
+.thread > .conflict:only-child {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.thread .conflict > .original {
+    margin: 0;
+}
+
+.thread .conflict .version,
+.thread .conflict > .comment {
     margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
 }
 
-/* What differs between two versions in a conflict: the first side's words struck, the second's marked. */
+.thread .conflict > .actions {
+    margin-top: 0.75rem;
+}
+
+/* A conflict's two sides, each in its own colour: neither is the wrong one. */
+.thread {
+    --side-0: var(--cyan);
+    --side-1: var(--plum);
+}
+
+.thread .conflict-heading {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Both versions in one: the words only one side has, in that side's colour. */
 .thread .diff {
-    margin: 0.25rem 0 0.5rem;
+    margin: 0;
     white-space: pre-wrap;
-    font-size: 13px;
 }
 
-.thread :is(.diff, .side) del {
-    background: var(--red-bg);
-    color: var(--red);
+.thread .diff :is(.side-0, .side-1) {
+    --side: var(--side-0);
+    padding: 0 0.1em;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--side) 16%, transparent);
+    color: var(--side);
 }
 
-.thread :is(.diff, .side) ins {
-    background: var(--green-bg);
-    color: var(--green);
-    text-decoration: none;
+.thread .diff .side-1 {
+    --side: var(--side-1);
 }
 
-/* A replaced word and its replacement, apart. */
-.thread .diff del + ins {
-    margin-left: 0.25em;
+/* Which colour is which side, in the key and on the buttons keeping each. */
+.thread .legend {
+    margin-top: 0.5rem;
+}
+
+.thread .legend .side {
+    margin: 0;
+}
+
+.thread .legend .side-0 strong::before,
+.thread .actions.keyed .side-0::before {
+    --side: var(--side-0);
+}
+
+.thread .legend .side-1 strong::before,
+.thread .actions.keyed .side-1::before {
+    --side: var(--side-1);
+}
+
+.thread .legend .side strong::before,
+.thread .actions.keyed :is(.side-0, .side-1)::before {
+    display: inline-block;
+    width: 0.7em;
+    height: 0.7em;
+    margin-right: 0.4em;
+    border-radius: 2px;
+    background: var(--side);
+    content: "";
 }
 
 /* Comments in a file or folder the user hasn't read. */
@@ -1478,11 +1530,13 @@ button.icon.on {
 
 .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.4rem;
     margin-top: 0.3rem;
 }
 
 .actions button {
+    white-space: nowrap;
     border: 1px solid var(--border);
     background: var(--bg);
     color: inherit;
