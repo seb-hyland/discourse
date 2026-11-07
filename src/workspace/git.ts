@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -15,7 +15,19 @@ export async function git(root: string, args: string[], input?: Buffer, env?: Re
 export async function gitBuffer(root: string, args: string[], input?: Buffer, env?: Record<string, string>): Promise<Buffer> {
     const child = exec("git", args, { cwd: root, encoding: "buffer", maxBuffer: 64 << 20, env: env && { ...process.env, ...env } });
     if (input) child.child.stdin!.end(input);
-    return (await child).stdout;
+    try {
+        return (await child).stdout;
+    } catch (e) {
+        throw gitError(e as Error & { stderr?: Buffer });
+    }
+}
+
+/** A failed git command's error, saying what git said went wrong rather than the whole command. */
+function gitError(e: Error & { stderr?: Buffer }): Error {
+    const stderr = e.stderr?.toString("utf8") ?? "";
+    if (stderr.includes("index.lock")) return new Error("Git is busy with another command. Try again in a moment.");
+    const said = stderr.match(/^(?:fatal|error): (.*)$/m)?.[1];
+    return new Error(said ? `Git couldn't do it: ${said}` : e.message);
 }
 
 const orNull = <T>(promise: Promise<T>) => promise.catch(() => null);
@@ -128,8 +140,10 @@ export async function filesAt(root: string, commit: string, dir: string): Promis
     return (await git(root, ["ls-tree", "-z", "--name-only", commit, "--", `${dir}/`])).split("\0").filter(Boolean);
 }
 
-/** A file as it was just before the latest commit that deleted it, if any did. */
+/** A deleted file as HEAD has it, or else as it was just before the latest commit that deleted it, if any did. */
 export async function beforeDeletion(root: string, file: string): Promise<Buffer | null> {
+    const committed = await fileAt(root, "HEAD", file);
+    if (committed) return committed;
     const commit = await deletion(root, file);
     return commit ? fileAt(root, `${commit}^`, file) : null;
 }
@@ -151,14 +165,16 @@ export async function renamedTo(root: string, gitDir: string, file: string): Pro
     };
     if (!(await head(root))) return null;
     // Compared in a scratch index, so the user's is untouched: what HEAD has, plus the file's
-    // deletion and every file new since.
+    // deletion and every file like it new since.
     const index = join(gitDir, `discourse-renames-${process.pid}`);
     const env = { GIT_INDEX_FILE: index };
     try {
         const untracked = (await git(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0");
         const added = (await git(root, ["diff", "--cached", "--no-renames", "--name-only", "--diff-filter=A", "-z", "HEAD"])).split("\0");
+        // A rename rarely changes the extension; this leaves out binaries and build output, which are slow to hash.
+        const candidates = [...untracked, ...added].filter((f) => f && extname(f) === extname(file));
         await git(root, ["read-tree", "HEAD"], undefined, env);
-        await git(root, ["add", "-A", "--", file, ...[...untracked, ...added].filter(Boolean)], undefined, env);
+        await git(root, ["add", "-A", "--", file, ...candidates], undefined, env);
         const found = renamed(await git(root, ["diff", "--cached", "-M", "--name-status", "-z", "HEAD"], undefined, env));
         if (found) return found;
     } catch {
@@ -228,4 +244,33 @@ async function jjSides(root: string, file: string): Promise<[string[], string[]]
     );
     // A commit id from jj's markers is a prefix, which git expands.
     return [named.map(([, , commit]) => commit), labels];
+}
+
+/**
+ * For a file jj left conflicted in the working copy without git's index stages, as after `jj edit`
+ * of a conflicted commit: its base and two sides, in the order of `jjSides`, or null if jj can't
+ * say. Asked for with git's style of markers, which are simpler to split than jj's own.
+ */
+export async function jjVersions(root: string, file: string): Promise<(Buffer | null)[] | null> {
+    const args = ["--ignore-working-copy", "--config", "ui.conflict-marker-style=git", "file", "show", "-r", "@", "--", `file:${JSON.stringify(file)}`];
+    const out = await orNull(exec("jj", args, { cwd: root }));
+    const versions = out && splitConflict(out.stdout);
+    return versions && versions.map((v) => (v ? Buffer.from(v) : null));
+}
+
+/** The base and two sides of text with git's diff3-style conflict markers, or null if it has none. */
+export function splitConflict(text: string): [string, string, string] | null {
+    const versions: [string, string, string] = ["", "", ""];
+    // Which versions the line belongs to: all of them, outside a conflict.
+    let into = [0, 1, 2];
+    let found = false;
+    for (const line of text.split(/(?<=\n)/)) {
+        if (line.startsWith("<<<<<<< ")) {
+            [into, found] = [[1], true];
+        } else if (found && into[0] === 1 && line.startsWith("||||||| ")) into = [0];
+        else if (found && into.length === 1 && into[0] !== 2 && /^=======\r?\n?$/.test(line)) into = [2];
+        else if (found && into[0] === 2 && line.startsWith(">>>>>>> ")) into = [0, 1, 2];
+        else for (const i of into) versions[i] += line;
+    }
+    return found ? versions : null;
 }

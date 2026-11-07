@@ -22,6 +22,9 @@ export function DocumentView({
     onComment,
     onOpenInEditor,
     onRestore,
+    moving,
+    onMove,
+    onRemoveAll,
     ref,
 }: {
     doc: Doc;
@@ -37,6 +40,11 @@ export function DocumentView({
     onComment: (span: Span) => void;
     onOpenInEditor: (span: Span) => void;
     onRestore: () => void;
+    /** A file to move a deleted document's comments to is being picked in the sidebar. */
+    moving: boolean;
+    /** Starts or stops picking one. */
+    onMove: () => void;
+    onRemoveAll: () => void;
     ref: Ref<DocumentHandle>;
 }) {
     const container = useRef<HTMLDivElement>(null);
@@ -119,12 +127,7 @@ export function DocumentView({
             </header>
             <div className="document" ref={container} onMouseDown={() => (dragging.current = true)} onMouseUp={onMouseUp} onScroll={onScroll}>
                 {doc.missing ? (
-                    <div className="missing-document">
-                        <p>This file has been deleted. Its comments are still here, to read or delete.</p>
-                        <div className="actions">
-                            <button onClick={onRestore}>Restore file</button>
-                        </div>
-                    </div>
+                    <MissingDocument moving={moving} onRestore={onRestore} onMove={onMove} onRemoveAll={onRemoveAll} />
                 ) : (
                     <TextView path={doc.path} text={doc.text} highlights={highlights} ref={view} />
                 )}
@@ -146,3 +149,19 @@ export function DocumentView({
 }
 
 const length = (span: Span) => span.to - span.from;
+
+/** What to do about a deleted document's comments: bring the file back, move them to another, or delete them. */
+function MissingDocument({ moving, onRestore, onMove, onRemoveAll }: { moving: boolean; onRestore: () => void; onMove: () => void; onRemoveAll: () => void }) {
+    return (
+        <div className="missing-document">
+            <p>This file has been deleted. Its comments are still here, to read, move to another file, or delete.</p>
+            <div className="actions">
+                <button onClick={onRestore}>Restore file</button>
+                <button aria-pressed={moving} onClick={onMove}>
+                    {moving ? "Pick a file in the sidebar…" : "Move comments to…"}
+                </button>
+                <button onClick={onRemoveAll}>Delete all comments</button>
+            </div>
+        </div>
+    );
+}

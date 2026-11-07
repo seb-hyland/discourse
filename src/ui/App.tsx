@@ -34,6 +34,9 @@ export interface Actions {
     resolveConflict(id: string, version: number | "both"): Promise<boolean>;
     restoreParent(replyId: string): Promise<boolean>;
     restoreDocument(): Promise<boolean>;
+    /** Moves every comment on the deleted document to another, and opens that. */
+    moveAll(to: string): Promise<boolean>;
+    removeAll(): Promise<boolean>;
     /** Opens the document in the user's editor, at the start of `span`. */
     openInEditor(span: Span): Promise<boolean>;
     openCommentFile(file: string): Promise<boolean>;
@@ -67,6 +70,8 @@ export function App() {
     const [active, setActive] = useState<string | null>(null);
     /** Text a new thread is being written on, which waits while other documents are looked at. */
     const [draft, setDraft] = useState<(Selection & { path: string }) | null>(null);
+    /** The deleted document whose comments are being moved to a file picked in the sidebar. */
+    const [movingFrom, setMovingFrom] = useState<string | null>(null);
     const [selection, setSelection] = useState<Span | null>(null);
     const documentView = useRef<DocumentHandle>(null);
     const [message, setMessage] = useState<Message | null>(null);
@@ -211,10 +216,13 @@ export function App() {
             timer = setTimeout(() => {
                 setVersion((v) => v + 1);
                 if (pending.files) void api.files().then(setFiles, report);
+                if (pending.renamed.length === 1) {
+                    const [[from, to]] = pending.renamed;
+                    setMessage({ text: `${from} was renamed to ${to}, so its comments moved there.` });
+                } else if (pending.renamed.length > 1) setMessage({ text: `Comments on ${pending.renamed.length} renamed files moved with them.` });
                 for (const [from, to] of pending.renamed) {
                     visited.current.delete(from);
                     setDraft((d) => (d?.path === from ? { ...d, path: to } : d));
-                    setMessage({ text: `${from} was renamed to ${to}, so its comments moved there.` });
                     if (shown.current?.path !== from) continue;
                     history.replaceState(null, "", hashOf(to));
                     void show(to);
@@ -253,7 +261,8 @@ export function App() {
             const next = await change();
             if (next && next.path === shown.current?.path) setDoc(next);
             else visited.current.delete(path);
-            setMessage(null);
+            // News stays, as an offer like "Mark all read" waits to be taken up; it was about something else.
+            setMessage((m) => (m?.error ? null : m));
             return true;
         } catch (e) {
             report(e);
@@ -262,12 +271,34 @@ export function App() {
         }
     };
 
-    /** Makes a change, then says what it did, offering to undo it. */
-    const undoable = async (change: () => Promise<Doc>, done: string) => {
-        const path = doc!.path;
+    /** Makes a change, then says what it did, offering to undo it unless it can't be. */
+    const undoable = async (change: () => Promise<Doc | void>, done: string, path = doc!.path, canUndo = true) => {
         if (!(await run(change, path))) return false;
-        setMessage({ text: done, action: { label: "Undo", run: () => void run(() => api.undo(path, "undo"), path) } });
+        setMessage({ text: done, action: canUndo ? { label: "Undo", run: () => void undo(path, "undo") } : undefined });
         return true;
+    };
+
+    /** Undoes or redoes the last change to a document's comments, saying what that was, and offering to take it back. */
+    const undo = async (path: string, direction: "undo" | "redo") => {
+        try {
+            const { doc: next, label } = await api.undo(path, direction);
+            if (next && next.path === shown.current?.path) setDoc(next);
+            else visited.current.delete(path);
+            // Its last comments gone, the document goes from the list too.
+            if (!next && path === shown.current?.path) open("");
+            const back = direction === "undo" ? "redo" : "undo";
+            setMessage(
+                label
+                    ? {
+                          text: `${direction === "undo" ? "Undid" : "Redid"} ${label}.`,
+                          action: { label: back === "undo" ? "Undo" : "Redo", run: () => void undo(path, back) },
+                      }
+                    : { text: `Nothing to ${direction}.` },
+            );
+        } catch (e) {
+            report(e);
+            if (path === shown.current?.path) void show(path);
+        }
     };
 
     const actions: Actions = {
@@ -279,11 +310,24 @@ export function App() {
         update: (id, update) => run(() => api.update(doc!.path, id, update)),
         remove: (id) => undoable(() => api.remove(doc!.path, id), deletion(doc!, id)),
         resolveConflict: (id, version) => {
-            const conflict = [...doc!.conflicts, ...doc!.threads.flatMap((t) => (t.conflict ? [t.conflict] : []))].find((c) => c.id === id)!;
-            return undoable(() => api.resolveConflict(doc!.path, id, version), kept(conflict, version));
+            const conflict = [...doc!.conflicts, ...doc!.threads.flatMap((t) => [...(t.conflict ? [t.conflict] : []), ...t.replyConflicts])].find(
+                (c) => c.id === id,
+            )!;
+            return undoable(() => api.resolveConflict(doc!.path, id, version), kept(conflict, version), doc!.path, conflict.undoable);
         },
         restoreParent: (replyId) => run(() => api.restoreParent(doc!.path, replyId)),
         restoreDocument: () => run(() => api.restoreDocument(doc!.path)),
+        moveAll: async (to) => {
+            const moved = await undoable(() => api.moveAll(doc!.path, to), `Moved the comments to ${to}.`, to);
+            if (moved) open(to);
+            return moved;
+        },
+        removeAll: async () => {
+            const path = doc!.path;
+            const removed = await undoable(() => api.removeAll(path), `Deleted every comment on ${path}.`, path);
+            if (removed) open("");
+            return removed;
+        },
         openInEditor: (span) =>
             run(() => {
                 const before = doc!.text.slice(0, span.from);
@@ -363,7 +407,7 @@ export function App() {
         const onKey = (e: KeyboardEvent) => {
             if (!doc || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z" || isTyping(e.target)) return;
             e.preventDefault();
-            void run(() => api.undo(doc.path, e.shiftKey ? "redo" : "undo"));
+            void undo(doc.path, e.shiftKey ? "redo" : "undo");
         };
         addEventListener("keydown", onKey);
         return () => removeEventListener("keydown", onKey);
@@ -406,6 +450,8 @@ export function App() {
         }, 500);
     }, [linked, doc]);
 
+    const moving = !!doc?.missing && movingFrom === doc.path;
+    const setMoving = (on: boolean) => setMovingFrom(on ? doc!.path : null);
     const selected = doc && selection && { span: selection, quote: doc.text.slice(selection.from, selection.to) };
     const shownDraft = draft && draft.path === doc?.path ? draft : null;
     // Edited outside since it was selected: highlighted, it would be on the wrong text.
@@ -416,9 +462,11 @@ export function App() {
                 files={files}
                 current={doc?.path ?? ""}
                 onOpen={open}
+                onError={report}
                 onSearch={() => setSearching((s) => (s ? null : { n: 1 }))}
                 searching={!!searching}
                 onSettings={() => api.editSettings().catch(report)}
+                picking={moving ? { from: doc!.path, onPick: (to) => void actions.moveAll(to), onCancel: () => setMoving(false) } : undefined}
             />
             <ResizeHandle panel="files" width={filesWidth} onResize={setFilesWidth} />
             {/* The document and its comments, which slide together as one page. */}
@@ -453,6 +501,9 @@ export function App() {
                             onSelect={setSelection}
                             onOpenInEditor={actions.openInEditor}
                             onRestore={actions.restoreDocument}
+                            moving={moving}
+                            onMove={() => setMoving(!moving)}
+                            onRemoveAll={actions.removeAll}
                             onComment={(span) => {
                                 setDraft({ path: doc.path, span, quote: doc.text.slice(span.from, span.to) });
                                 setSelection(null);
@@ -549,7 +600,12 @@ function markRead(doc: Doc, versions: string[]): Doc {
     const readConflict = (c: Conflict): Conflict => ({ ...c, versions: c.versions.map((v) => (typeof v === "object" && v ? read(v) : v)) });
     return {
         ...doc,
-        threads: doc.threads.map((t) => ({ ...t, comments: t.comments.map(read), conflict: t.conflict && readConflict(t.conflict) })),
+        threads: doc.threads.map((t) => ({
+            ...t,
+            comments: t.comments.map(read),
+            conflict: t.conflict && readConflict(t.conflict),
+            replyConflicts: t.replyConflicts.map(readConflict),
+        })),
         orphans: doc.orphans.map(read),
         conflicts: doc.conflicts.map(readConflict),
     };

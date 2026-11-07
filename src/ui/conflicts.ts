@@ -13,12 +13,13 @@ const valid = (v: Conflict["versions"][number]): v is ConflictVersion => typeof 
  * What a conflict card says and offers: its heading; the choices, in order; and, where both sides
  * kept the comment with different text, the two versions to show what differs between.
  */
-export function conflictChoices({ versions, sides, replies, thread }: Conflict): {
+export function conflictChoices({ versions, sides, replies }: Conflict): {
     heading: string;
     choices: Choice[];
     both: [ConflictVersion, ConflictVersion] | null;
 } {
-    const what = thread ? "reply" : "comment";
+    // Only a thread's first comment is on text.
+    const what = versions.some((v) => valid(v) && v.quote === undefined) ? "reply" : "comment";
     const [first, second] = versions;
     const both = valid(first) && valid(second) && first.text !== second.text ? ([first, second] as [ConflictVersion, ConflictVersion]) : null;
     const withReplies = replies ? `, with ${replies === 1 ? "its reply" : `its ${replies} replies`}` : "";

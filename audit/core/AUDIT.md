@@ -94,5 +94,8 @@ Decisions already made. Don't re-propose these; fix around them.
 - Delete without a confirm dialog; rely on undo and a toast. Prefer toasts in general to popups that obstruct all other interaction.
 - With no document open, the app shows "All threads", selected by default.
 - Big diffs must not be cut off by a timeout: run them off the main thread and/or show a loader.
+- A comment's author is always the git (or jj) user name; there's no Author field. In the app, only your own comments can be edited or deleted; anyone can reply to, resolve, reopen or move any thread. Edits made outside the app (by hand, or by another side of a merge) are out of scope.
+- Timestamps are stored in UTC (`YYYY-MM-DDTHH:MM:SS.sssZ`) and shown, and picked, in local time.
+- A conflicted thread whose sides were both resolved shows as open until settled (audit 4's U4): left as is.
 
 Add new rulings here as they're made.

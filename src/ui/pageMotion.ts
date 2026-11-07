@@ -24,12 +24,15 @@ const MOST_FADED = 0.8;
  */
 const parts = () => [...document.querySelectorAll<HTMLElement>(".page > main > :not(.search), .page > .threads")];
 
+/** The system asks for less motion: pages change in place, as a swipe still goes back and forward. */
+const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 /** Slides out, held off-screen until the next page slides in. */
 let leaving: Animation[] = [];
 
 /** Holds the page `offset` pixels to the side, as a swipe drags it. */
 export function drag(offset: number) {
-    if (leaving.length) return;
+    if (leaving.length || still()) return;
     for (const el of parts()) {
         el.style.translate = `${offset}px`;
         el.style.opacity = String(Math.max(MOST_FADED, 1 - Math.abs(offset) * FADE_PER_PX));
@@ -53,6 +56,7 @@ export function springBack() {
 
 /** Slides the page off the way it's going, `direction`; resolves once it's gone. */
 export async function slideOut(direction: Direction, motion = SWIPED): Promise<void> {
+    if (still()) return;
     const to = direction === "back" ? motion.out : -motion.out;
     // No easing of the columns' widths while pages change.
     document.documentElement.dataset.slide = direction;
@@ -68,6 +72,7 @@ export async function slideOut(direction: Direction, motion = SWIPED): Promise<v
 export function slideIn(direction: Direction, motion = SWIPED) {
     for (const a of leaving) a.cancel();
     leaving = [];
+    if (still()) return;
     const from = direction === "back" ? -motion.in : motion.in;
     const arriving = parts().map((el) =>
         el.animate(
@@ -86,7 +91,7 @@ export function slideIn(direction: Direction, motion = SWIPED) {
  * comes from the left, as if it were turned back to.
  */
 export async function slidePage(direction: Direction, change: () => void) {
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return change();
+    if (still()) return change();
     await slideOut(direction, STEPPED);
     change();
     slideIn(direction, STEPPED);

@@ -4,7 +4,7 @@ import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, net, protocol, shell, type MenuItemConstructorOptions } from "electron";
 import type { ViteDevServer } from "vite";
-import type { Bridge, CommentUpdate, DocumentView, NewComment } from "../shared/api.ts";
+import type { Bridge, Change, CommentUpdate, DocumentView, MenuItem, NewComment } from "../shared/api.ts";
 import { openInEditor, type SettingsError } from "../workspace/editor.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { describe, forgetFolders, recentFolders, rememberFolder } from "./recents.ts";
@@ -52,8 +52,11 @@ async function openFolder(root: string) {
         webPreferences: { preload: join(import.meta.dirname, "preload.cjs") },
     });
     folders.set(id, { root, window, workspace });
-    const stopWatching = workspace.watch((change) => window.isDestroyed() || window.webContents.send("change", change));
-    void workspace.settleAll();
+    const send = (change: Change) => window.isDestroyed() || window.webContents.send("change", change);
+    const stopWatching = workspace.watch(send);
+    // What settled while the app was closed is news too, told once the window can hear it.
+    const settled = workspace.settleAll();
+    stayInApp(window);
     rememberBounds(window);
     window.on("page-title-updated", (e) => e.preventDefault());
     window.webContents.on("did-navigate-in-page", updateGo);
@@ -69,10 +72,19 @@ async function openFolder(root: string) {
         return { action: "deny" };
     });
     await load(window, id);
+    for (const change of await settled) send(change);
     await rememberFolder(root);
     app.addRecentDocument(root);
     await updateMenu();
     start?.close();
+}
+
+/**
+ * Keeps a window on the app's own page: a file dropped on it, say, would otherwise replace the app,
+ * and the page it loads would be given the bridge to the main process.
+ */
+function stayInApp(window: BrowserWindow) {
+    window.webContents.on("will-navigate", (e) => e.preventDefault());
 }
 
 /**
@@ -127,10 +139,26 @@ const handlers: Handlers = {
     add: change((w, path, comment: NewComment) => w.add(path, comment)),
     update: change((w, path, id: string, update: CommentUpdate) => w.update(path, id, update)),
     remove: change((w, path, id: string) => w.remove(path, id)),
-    undo: change((w, path, direction: "undo" | "redo") => w.undo(path, direction)),
+    undo: async ({ workspace }, path, direction) => {
+        const label = await workspace.undo(path, direction);
+        return { label, doc: await workspace.view(path).catch(() => null) };
+    },
     resolveConflict: change((w, path, id: string, version: number | "both") => w.resolveConflict(path, id, version)),
     restoreParent: change((w, path, replyId: string) => w.restoreParent(path, replyId)),
     restoreDocument: change((w, path) => w.restoreDocument(path)),
+    moveAll: async ({ workspace }, path, to) => {
+        await workspace.moveAll(path, to);
+        return workspace.view(to);
+    },
+    removeAll: ({ workspace }, path) => workspace.removeAll(path),
+    reveal: async ({ workspace }, path, what) => {
+        const file = what === "comments" ? workspace.commentsFolder(path) : workspace.documentPath(path);
+        if (!existsSync(file)) throw new Error(`${what === "comments" ? `${path} has no comments` : `${path} doesn't exist`}.`);
+        if (what === "file") return shell.showItemInFolder(file);
+        const failure = await shell.openPath(file);
+        if (failure) throw new Error(`Couldn't show ${path}'s comments: ${failure}`);
+    },
+    menu: ({ window }, items) => popupMenu(window, items),
     openInEditor: async ({ workspace }, path, line, column) => {
         await openInEditor((await settings()).editor, workspace.documentPath(path), line, column);
     },
@@ -183,6 +211,15 @@ for (const [channel, run] of Object.entries(handlers) as [Channel, (folder: Fold
     });
 }
 
+/** Shows a context menu, resolving to the id of the item chosen, or null if none was. */
+function popupMenu(window: BrowserWindow, items: MenuItem[]): Promise<string | null> {
+    return new Promise((resolve) => {
+        const menu = Menu.buildFromTemplate(items.map(({ id, label, enabled }) => ({ label, enabled, click: () => resolve(id) })));
+        // On some platforms the menu closes before its item's click arrives.
+        menu.popup({ window, callback: () => setTimeout(() => resolve(null), 100) });
+    });
+}
+
 async function chooseFolder() {
     const { canceled, filePaths } = await dialog.showOpenDialog({ properties: ["openDirectory"] });
     if (!canceled) await openFolder(realpathSync(filePaths[0]));
@@ -206,6 +243,7 @@ function showStart() {
         webPreferences: { preload: join(import.meta.dirname, "preload.cjs") },
     });
     start.on("closed", () => (start = null));
+    stayInApp(start);
     void load(start);
 }
 

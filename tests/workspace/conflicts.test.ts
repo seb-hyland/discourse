@@ -154,7 +154,8 @@ async function merged({ ours, theirs }: Scenario) {
     return { ws, ids };
 }
 
-const conflictIn = (view: DocumentView): Conflict | undefined => view.threads.find((t) => t.conflict)?.conflict ?? view.conflicts[0];
+const conflictIn = (view: DocumentView): Conflict | undefined =>
+    view.threads.find((t) => t.conflict)?.conflict ?? view.threads.flatMap((t) => t.replyConflicts)[0] ?? view.conflicts[0];
 const texts = (view: DocumentView) => view.threads.flatMap((t) => t.comments.map((c) => c.text));
 const unmerged = (ws: Workspace) => git(ws.root, "ls-files", "--unmerged").toString();
 

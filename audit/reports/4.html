@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discourse Audit 4</title>
+<link rel="stylesheet" href="../core/audit.css">
+</head>
+<body>
+<div class="app">
+<nav class="files" aria-label="Contents">
+  <ul>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#fix-first">Fix first <span class="count">6</span></a></li>
+    <li><div class="folder">findings</div>
+      <ul>
+        <li><a href="#merge">Merge &amp; conflicts <span class="count">6</span></a></li>
+        <li><a href="#seen">Seen tracking <span class="count">2</span></a></li>
+        <li><a href="#bugs">Bugs <span class="count">3</span></a></li>
+        <li><a href="#ux">UX <span class="count">7</span></a></li>
+        <li><a href="#errors">Error messages <span class="count">6</span></a></li>
+        <li><a href="#style">Code quality <span class="count">7</span></a></li>
+      </ul>
+    </li>
+    <li><div class="folder">proposals</div>
+      <ul>
+        <li><a href="#complexity">Reducing complexity <span class="count">3</span></a></li>
+        <li><a href="#features">Feature suggestions <span class="count">4</span></a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+
+<main>
+<div class="page">
+<header class="document-header"><h1>audit/reports/4.html · Discourse @ cecb024 · 2026-11-07</h1></header>
+
+<section id="overview">
+<h2>Discourse audit 4</h2>
+<p class="lede">Almost everything audit 3 raised is fixed: renames move comments, re-pins no longer cause conflicts, settling is undoable and toasted, and unread comments are marked. What's left is mostly at the edges of conflict handling. The main risk: <mark>keeping the edited side of a delete-vs-edit conflict silently drops the thread's replies, and undoing a settle in a jj repository commits conflict markers.</mark> Elsewhere, any comment on a <code>.json</code> file puts a broken entry in the file tree, and nothing stops the window from navigating away from the app.</p>
+
+<div class="summary">
+  <div class="stat"><b>31</b><span>findings</span></div>
+  <div class="stat"><b>3</b><span>high severity</span></div>
+  <div class="stat"><b>13</b><span>reproduced in scratch repos</span></div>
+  <div class="stat"><b>82/82</b><span>tests pass · <code>tsc</code> clean</span></div>
+</div>
+<p class="unchecked">The Electron app wasn't run. B1, the U series and the E5 wording come from reading the components and main process. No scratch repository had a reachable remote, so pushed-anchor behaviour (fixed anchors, <code>pushedBlob</code>, <code>isPushed</code>) was only covered by the existing tests. Timings come from a scratch copy of thelang, which is small (57 files, 33 comments), so they say little about large repositories.</p>
+</section>
+
+<section id="fix-first">
+<h2>Fix first</h2>
+<ol class="top">
+  <li><a href="#M1">M1</a> · Keeping the edited side of a deleted thread brings back the first comment but not its replies.</li>
+  <li><a href="#M2">M2</a> · In a jj repository, undoing a settled conflict commits a comment file full of conflict markers.</li>
+  <li><a href="#B1">B1</a> · The window can be navigated away from the app, and any page it lands on gets the full IPC bridge.</li>
+  <li><a href="#B2">B2</a> · Commenting on any <code>.json</code> file adds a "." entry to the file tree that says its comments can't be read.</li>
+  <li><a href="#M3">M3</a> · Settling a conflicted document by taking the other side's text unplaces the threads on it.</li>
+  <li><a href="#B3">B3</a> · "Restore file" fails for a document deleted but not yet committed, which is the commonest way to lose one.</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="merge">
+<h2>1 · Merge and conflict behaviour</h2>
+<p class="section-intro">Each scenario was run in a throwaway repository with real <code>git merge</code>, <code>git rebase</code>, and jj 0.44 colocated (<code>jj new x y</code>, <code>jj rebase</code>), driving <code>Workspace</code> directly. The table is the summary; cards below give detail.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>Scenario</th><th>What happens now</th><th>Verdict</th></tr>
+<tr><td>Both sides edit different fields (text vs resolved)</td><td>Merged field by field, no prompt</td><td class="ok">good</td></tr>
+<tr><td>Both sides edit the text</td><td>Card with word diff, Keep This branch / Keep Incoming / Keep both</td><td class="meh"><a href="#M4">M4</a></td></tr>
+<tr><td>Both sides change the type only</td><td>Card with two identical texts; only the type tag differs</td><td class="ok">ok</td></tr>
+<tr><td>Rebase conflict</td><td>Labelled Upstream / Your commit, with commit subjects</td><td class="ok">good</td></tr>
+<tr><td>jj merge (<code>jj new ada bob</code>)</td><td>Labelled by bookmark: "ada (ada edits)" / "bob (bob edits)"</td><td class="ok">good</td></tr>
+<tr><td>jj rebase, then <code>jj new</code> on the conflicted commit</td><td>Card appears; the rebased side is labelled by change id</td><td class="ok">ok</td></tr>
+<tr><td>jj rebase, then <code>jj edit</code> the conflicted commit</td><td>No index stages; only "has merge conflict markers · Open in editor"</td><td class="meh"><a href="#M5">M5</a></td></tr>
+<tr><td>Undo after settling (git)</td><td>File and index stages restored; redo settles again</td><td class="ok">good</td></tr>
+<tr><td>Undo after settling (jj)</td><td>Index restored, but jj snapshots the marker-filled file as resolved content</td><td class="bad"><a href="#M2">M2</a></td></tr>
+<tr><td>Delete thread vs edit or resolve it</td><td>Card; "Keep Incoming" restores the first comment only</td><td class="bad"><a href="#M1">M1</a></td></tr>
+<tr><td>Delete thread vs reply to it</td><td>Orphan; "Restore thread" brings back the thread and the replies deleted with it</td><td class="ok">good</td></tr>
+<tr><td>Delete thread vs automatic re-pin, or vs Move to selection</td><td>Deleted without asking</td><td class="ok">good</td></tr>
+<tr><td>Delete reply vs reply to that reply</td><td>Orphan with "Restore that reply"</td><td class="ok">good</td></tr>
+<tr><td>Resolve vs reply</td><td>Stays resolved; unfolds while the reply is unread</td><td class="ok">good</td></tr>
+<tr><td>Both sides move the anchor</td><td>Ours kept, unless only theirs still places</td><td class="ok">good</td></tr>
+<tr><td>Conflicted document, both re-pinned</td><td>Comment conflict settled on our anchor; taking their text later unplaces the thread</td><td class="bad"><a href="#M3">M3</a></td></tr>
+<tr><td>Document renamed (<code>git mv</code>, or a folder moved with plain <code>mv</code>)</td><td>Comments moved to the new path, with a toast</td><td class="ok">good</td></tr>
+<tr><td>Rename on one side, reply on the other</td><td>git's directory-rename puts the reply under the new path; settled on the next change</td><td class="ok">good</td></tr>
+<tr><td>Document deleted and committed</td><td>Shown as deleted, "Restore file" works</td><td class="ok">good</td></tr>
+<tr><td>Document deleted, not committed</td><td>"Restore file" fails</td><td class="bad"><a href="#B3">B3</a></td></tr>
+<tr><td>Comment conflicts settled while the app was closed</td><td>Settled on open, silently</td><td class="meh"><a href="#M6">M6</a></td></tr>
+</table>
+</div>
+
+<article class="thread high first" id="M1">
+  <header><blockquote class="anchor">workspace.ts:405 resolveConflict() · :412 writes only [id, chosen] · :419 replies handled only when keeping it deleted</blockquote></header>
+  <div class="comment">
+    <header><strong>M1 · Keeping the edited side of a deleted thread loses its replies</strong><span class="tag high">high</span><span class="tag confirmed">reproduced</span></header>
+    <p>Ada deletes a thread with two replies. Bob, on another branch, edits (or resolves) its first comment. After the merge the card says "One side deleted this comment and the other changed it". The replies merged cleanly as deleted, because Bob never touched them, so the card counts 0 replies. Choosing "Keep Incoming" brings back Bob's first comment alone. Both replies stay deleted, with no orphan card or restore offered. The user chose to keep the thread and lost most of it without being told.</p>
+    <p class="fix">When the kept version starts a thread and the other side deleted it, also bring back the replies deleted in the same commit. <code>restoreParent</code> already does exactly this (the sibling loop at :445–453); move that loop into a helper and call it from both. See C2.</p>
+  </div>
+</article>
+
+<article class="thread high first" id="M2">
+  <header><blockquote class="anchor">workspace.ts:389–397 undo() writes `before`, then unsettle() · git.ts:105 unsettle() · workspace.ts:760 `before` is the file as jj materialised it</blockquote></header>
+  <div class="comment">
+    <header><strong>M2 · In jj, undoing a settled conflict commits conflict markers</strong><span class="tag high">high</span><span class="tag confirmed">reproduced</span></header>
+    <p>In a colocated jj repo, settle a comment conflict, then press Undo. Discourse writes back the file with jj's markers and restores the git index stages, so its own card comes back. But jj has already snapshotted the settled file, so the merge commit is no longer conflicted. On its next snapshot it records the marker text as the file's resolved content: <code>jj st</code> shows <code>M .comments/…json</code> and <code>conflict</code> is false. The commit now holds invalid JSON. The next jj command that rewrites the index drops the stages, and the card becomes "has merge conflict markers". If the user pushes first, everyone gets the broken file.</p>
+    <p class="fix">In a jj repository, don't offer to undo a settle. Leave it out of history, and leave out the Undo button on its toast. The user can still <code>jj undo</code>. Detect jj the same way <code>jjSides</code> does (no MERGE_HEAD or rebase state, and <code>.jj</code> present).</p>
+  </div>
+</article>
+
+<article class="thread first" id="M3">
+  <header><blockquote class="anchor">workspace.ts:554–558 load() picks the anchor that places in the conflicted text · :297–308 settle() writes and git-adds it · :630 repin() skips the marker-filled document</blockquote></header>
+  <div class="comment">
+    <header><strong>M3 · Settling a conflicted document with the other side's text unplaces its threads</strong><span class="tag medium">medium</span><span class="tag confirmed">reproduced</span></header>
+    <p>A thread sits on "quick brown fox" (not yet pushed). Ada rewrites it to "slow brown fox", Bob to "quick red fox", and each side's Discourse re-pins the anchor. The merge conflicts in <code>a.md</code> and in the comment file. Discourse settles the comment at once, keeping Ada's anchor, because both still place inside the marker-filled text. The user then resolves <code>a.md</code> by taking Bob's line. The thread shows "The text here has changed too much to be sure it's the right place." Bob's anchor would have placed it exactly, but it was discarded when the comment was settled.</p>
+    <p class="fix">Don't settle a comment whose sides differ only in <code>anchor</code> while its document is still unmerged (<code>unmerged(root, path)</code> is non-empty). Settle it on the first change after the document is settled, when <code>load</code>'s "keep the one that still places" check can see the final text.</p>
+  </div>
+</article>
+
+<article class="thread" id="M4">
+  <header><blockquote class="anchor">workspace.ts:416–417 resolveConflict("both") copies author and timestamp from the other version · conflicts.ts:28 "Keeps … with … as a reply"</blockquote></header>
+  <div class="comment">
+    <header><strong>M4 · "Keep both" credits the other side's edit to the original author, at the original time</strong><span class="tag medium">medium</span><span class="tag confirmed">reproduced</span></header>
+    <p>Ada writes a comment; Ada and Bob each edit it on their own branches. "Keep both" keeps Ada's text and adds Bob's as a reply, but the reply's author is "Ada" and its date is the date of her original comment. That's because Bob's edit didn't change the <code>author</code> field. The reply sorts above every existing reply and reads as if Ada had answered herself before anyone else. The conflict card did name Bob, from his commit, so the information was there.</p>
+    <p class="fix">Use the side's commit author (<code>sides[1].commit?.author</code>, already loaded in <code>toView</code>) and the current time for the new reply. That's a two-line change in <code>resolveConflict</code>, passing the name through, or looking it up with <code>sides()</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="M5">
+  <header><blockquote class="anchor">git.ts:88 unmerged() reads only git index stages · workspace.ts:543–545 falls back to a problem</blockquote></header>
+  <div class="comment">
+    <header><strong>M5 · A jj conflict edited directly gets no side picker</strong><span class="tag low">low</span><span class="tag confirmed">reproduced</span></header>
+    <p>After <code>jj rebase -r bob -d ada</code>, running <code>jj edit bob</code> puts the conflicted commit in the working copy, but jj writes no index stages. Discourse sees only a file with markers: "has merge conflict markers · Open in editor". With <code>jj new bob</code> instead, stages exist and the full card appears. The same conflict is handled one way or the other depending on a jj habit. Remaining from audit 3's M9, which covered the non-merge case.</p>
+    <p class="fix">When <code>.jj</code> exists and a comment file has jj markers but no stages, read the sides with <code>jj file show -r 'conflicts() &amp; @'</code>, or parse jj's marker format, which <code>jjSides</code> already half does.</p>
+  </div>
+</article>
+
+<article class="thread" id="M6">
+  <header><blockquote class="anchor">main.ts:56 void workspace.settleAll() · workspace.ts:321–323 discards each settle()'s result</blockquote></header>
+  <div class="comment">
+    <header><strong>M6 · Conflicts settled while the app was closed are settled silently</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>Merges made while Discourse is running get the "Settled 3 comment conflicts from the merge automatically" toast. The same merge made with the app closed is settled on open, and nothing says so. Renames found on open aren't announced either. Remaining from audit 3's M10.</p>
+    <p class="fix">Have <code>settleAll</code> return the summed <code>merged</code> and the renames. Send them as one <code>change</code> event, which the existing toast code then handles.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="seen">
+<h2>2 · Seen tracking</h2>
+
+<article class="thread" id="S1">
+  <header><blockquote class="anchor">workspace.ts:743 commentView() · :746 unseen() — author !== this.author</blockquote></header>
+  <div class="comment">
+    <header><strong>S1 · Someone else's edit to your comment is never shown as unread</strong><span class="tag medium">medium</span><span class="tag confirmed">reproduced</span></header>
+    <p>Bob changes Ada's comment from "Ada wrote this" to something else, and the merge is clean. In Ada's view the comment shows Bob's text under her name, with no unread mark and no file count. Ownership comes from the <code>author</code> field, and an edit doesn't change it. So any change to your own comments by anyone else is invisible, as is another side's version of your comment in a conflict. The same gap causes M4's misattribution.</p>
+    <p class="fix">Record who last changed the text (F1's <code>editedBy</code>, set in <code>update()</code>), and test <code>(editedBy ?? author) !== this.author</code> instead of <code>author</code>. Comments you wrote or last edited stay read on a fresh clone; anyone else's edit shows as unread.</p>
+  </div>
+</article>
+
+<article class="thread" id="S2">
+  <header><blockquote class="anchor">workspace.ts:166 files() counts loaded.comments · :198 allThreads() counts thread comments · FileTree.tsx:36 · AllThreads.tsx:44</blockquote></header>
+  <div class="comment">
+    <header><strong>S2 · Unread counts leave out conflicts and disagree with each other</strong><span class="tag low">low</span><span class="tag confirmed">reproduced</span></header>
+    <p>Bob edits his reply on one branch and Ada edits it on hers. After the merge, Bob's version is marked unread in the card, but neither the file tree nor All threads counts it. An unread orphaned reply is the other way round: the file tree counts it, while the All threads header ("N unread comments") doesn't. So the sidebar's All threads badge and the page it opens show different numbers. Remaining from audit 3's S5.</p>
+    <p class="fix">Count once, from what <code>toView</code> shows: threads, orphans and conflict versions. See C1.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="bugs">
+<h2>3 · Bugs and incorrect behaviour</h2>
+
+<article class="thread high first" id="B1">
+  <header><blockquote class="anchor">main.ts:48–53 new BrowserWindow, no will-navigate handler · main.ts:67 only window.open is limited · preload.cjs:4 exposes invoke(channel) to whatever page is loaded</blockquote></header>
+  <div class="comment">
+    <header><strong>B1 · The window can leave the app, and the page it loads gets the IPC bridge</strong><span class="tag high">high</span><span class="tag plausible">plausible</span></header>
+    <p>Only <code>window.open</code> is restricted. Electron's default is to navigate when a file is dropped on the window, and nothing in the UI prevents drops. Dropping a file, say an HTML page from the repository, replaces the app with that page and leaves no way back but reload. The preload script runs for every page in the window, so that page gets <code>window.discourse.invoke</code> for every channel. That includes <code>search</code>, which reads every file in the folder, and <code>openInEditor</code>, which runs the configured command. The likelihood is low; the fix is one line.</p>
+    <p class="fix"><code>window.webContents.on("will-navigate", (e) =&gt; e.preventDefault())</code> for folder windows and the start window. Hash changes don't fire it.</p>
+  </div>
+</article>
+
+<article class="thread first" id="B2">
+  <header><blockquote class="anchor">workspace.ts:811–814 commentedPaths() · :172 attention "Its comments can't be read" · :497–500 watch() maps the same way</blockquote></header>
+  <div class="comment">
+    <header><strong>B2 · Commenting on a .json file adds a broken "." entry to the file tree</strong><span class="tag medium">medium</span><span class="tag confirmed">reproduced</span></header>
+    <p>Comment on <code>package.json</code>. The file tree gains an entry named "." with a red "!" and the tip "Its comments can't be read". <code>readdir(…, { recursive: true })</code> lists the folder <code>.comments/package.json</code> itself, which ends in <code>.json</code>, so its parent "." is taken for a commented document. <code>load(".")</code> then fails. Any repository with comments on <code>tsconfig.json</code>, <code>package.json</code> or data files hits this.</p>
+    <p class="fix">Use <code>readdir(dir, { recursive: true, withFileTypes: true })</code> and keep only <code>isFile()</code> entries (build the path from <code>parentPath</code>). In the watcher, ignore events whose type is <code>addDir</code>/<code>unlinkDir</code> under <code>.comments</code> (see Q5).</p>
+  </div>
+</article>
+
+<article class="thread first" id="B3">
+  <header><blockquote class="anchor">workspace.ts:461–470 restoreDocument() · git.ts:132 beforeDeletion() only looks for a deleting commit</blockquote></header>
+  <div class="comment">
+    <header><strong>B3 · "Restore file" fails for a deletion that isn't committed</strong><span class="tag medium">medium</span><span class="tag confirmed">reproduced</span></header>
+    <p>Delete <code>a.md</code> in an editor or Finder. Discourse shows "This file has been deleted. Its comments are still here" and offers "Restore file". Pressing it says "a.md isn't in the history, so it can't be restored.", although HEAD has it. Restore only works once the deletion has been committed. An accidental, uncommitted delete is the case where restoring matters most.</p>
+    <p class="fix">Try <code>fileAt(root, "HEAD", path)</code> first, then fall back to the deleting commit. About three lines.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="ux">
+<h2>4 · UX: popups, tooltips, buttons</h2>
+
+<article class="thread" id="U1">
+  <header><blockquote class="anchor">App.tsx:256 run() → setMessage(null) on every success · App.tsx:193 lasting "Mark all read" offer · :224 "Settled … automatically"</blockquote></header>
+  <div class="comment">
+    <header><strong>U1 · Any successful action dismisses whatever toast is showing</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>On first open, the "142 comments here you haven't read · Mark all read" offer is meant to wait. Resolving a thread or sending a reply clears it, as it does the rename and auto-settle news. The user can't get that offer back.</p>
+    <p class="fix">In <code>run</code>, clear only error messages: <code>setMessage((m) =&gt; (m?.error ? null : m))</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="U2">
+  <header><blockquote class="anchor">ThreadPanel.tsx:60–61 draft composer · App.tsx:412 draftChanged</blockquote></header>
+  <div class="comment">
+    <header><strong>U2 · "Comment" stays enabled after the selected text changed</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>The card already says "This text has changed since you selected it. Select it again, then choose Comment." But the Comment button still works, and pressing it shows a red error popup saying the same thing again.</p>
+    <p class="fix">Pass a <code>disabled</code> prop to <code>Composer</code> and set it from <code>draftChanged</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="U3">
+  <header><blockquote class="anchor">App.tsx:214–217 one setMessage per rename, the last one wins</blockquote></header>
+  <div class="comment">
+    <header><strong>U3 · Moving a folder announces only one of the files it moved</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>Moving <code>docs/</code> to <code>guide/</code> moves the comments of every document in it (reproduced with two). The toast names only the last one: "docs/y.md was renamed to guide/y.md, so its comments moved there."</p>
+    <p class="fix">With more than one rename, say "Comments on 2 renamed files moved with them."</p>
+  </div>
+</article>
+
+<article class="thread" id="U4">
+  <header><blockquote class="anchor">workspace.ts:724 resolved: false for every conflicted thread · :164–165 counted as open</blockquote></header>
+  <div class="comment">
+    <header><strong>U4 · A resolved thread in a conflict shows as open</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>If both sides kept a thread resolved but edited its text differently, it appears open with a conflict card, and the file's open count goes up. Once the conflict is settled it is resolved again and the count drops back. That looks like a reopen the user never made.</p>
+    <p class="fix"><code>resolved: roots.every((r) =&gt; r.resolved)</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="U5">
+  <header><blockquote class="anchor">App.tsx:362–370 ⌘Z / ⇧⌘Z handler · workspace.ts:380 nothing to undo returns silently</blockquote></header>
+  <div class="comment">
+    <header><strong>U5 · ⌘Z gives no sign of what it undid</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>Undo from the keyboard can bring back a deleted thread far off-screen or un-settle a conflict, with no message. When there's nothing to undo, nothing happens at all. The toast's Undo button is clear by comparison.</p>
+    <p class="fix">Have <code>undo</code> return a short label of the step, such as "Undid delete thread", and show it as a toast with Redo.</p>
+  </div>
+</article>
+
+<article class="thread" id="U6">
+  <header><blockquote class="anchor">FileTree.tsx:32 useState(false) for "Only show commented files" · :33 useStored for collapsed</blockquote></header>
+  <div class="comment">
+    <header><strong>U6 · "Only show commented files" is forgotten on reload, unlike every other toggle</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>Sidebar collapse, All threads filters, search scopes and panel widths are all remembered. This one toggle isn't.</p>
+    <p class="fix"><code>useStored("files.commentedOnly", false)</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="U7">
+  <header><blockquote class="anchor">pageMotion.ts:89 slidePage checks prefers-reduced-motion · :31 drag, :55 slideOut, :68 slideIn don't</blockquote></header>
+  <div class="comment">
+    <header><strong>U7 · Swiping between pages ignores "reduce motion"</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>Back and forward from the menu skip the slide when the system asks for reduced motion. A trackpad swipe still drags, slides out and slides in.</p>
+    <p class="fix">Return early from <code>drag</code>, <code>slideOut</code> and <code>slideIn</code> under reduced motion, as <code>slidePage</code> does.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="errors">
+<h2>5 · Error messages</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Where</th><th>What the user sees</th><th>Suggest</th></tr></thead>
+<tbody>
+<tr id="E1"><td>E1</td><td><code>workspace.ts:764</code> change() → <code>git.ts:100</code> settle(), any raw git failure via <code>main.ts:181</code></td><td><code>Command failed: git add -- .comments/a.md/1b17….json fatal: Unable to create '/…/.git/index.lock': File exists. Another git process seems to be running…</code> (reproduced)</td><td>"Git is busy with another command. Try again in a moment." Wrap <code>git()</code> failures in an Error carrying git's first <code>fatal:</code> line, and recognise <code>index.lock</code>.</td></tr>
+<tr id="E2"><td>E2</td><td><code>workspace.ts:464</code> restoreDocument()</td><td><code>a.md isn't in the history, so it can't be restored.</code>, for a file HEAD has (reproduced, <a href="#B3">B3</a>)</td><td>After B3's fix, only when it was never committed: "a.md was never committed, so there's no copy to restore."</td></tr>
+<tr id="E3"><td>E3</td><td><code>workspace.ts:467</code> restoreDocument()</td><td><code>a.md is already back.</code></td><td>"a.md already exists." The view then refreshes and shows it.</td></tr>
+<tr id="E4"><td>E4</td><td><code>workspace.ts:528</code> load()</td><td><code>Can't read a.md (EMFILE).</code></td><td>Use the error's own text, which names the cause: "Can't read a.md: too many open files."</td></tr>
+<tr id="E5"><td>E5</td><td><code>workspace.ts:172</code> files() attention tip</td><td><code>Its comments can't be read</code></td><td>Give the reason from <code>load</code>'s error, e.g. "Can't show comments: package.json is a folder" or "… isn't a text file."</td></tr>
+<tr id="E6"><td>E6</td><td><code>workspace.ts:150</code> Workspace.open(), in a dialog titled "Can't open x"</td><td><code>/Users/…/x isn't in a git repository. Discourse keeps comments alongside git history; jj repositories need to be colocated with git.</code></td><td>"x isn't a git repository. Discourse keeps comments in git history. For a jj repository, run <code>jj git init --colocate</code> first." The title already has the name; the full path isn't needed.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="style">
+<h2>6 · Code quality and style</h2>
+
+<article class="thread" id="Q1">
+  <header><blockquote class="anchor">FileTree.tsx:158–162 two doc comments stacked above Count()</blockquote></header>
+  <div class="comment">
+    <header><strong>Q1 · A stale doc comment sits above the current one</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>"With only resolved threads to read, a dot says so instead" describes an earlier version. The comment below it is the current one.</p>
+    <p class="fix">Delete lines 158–161.</p>
+  </div>
+</article>
+
+<article class="thread" id="Q2">
+  <header><blockquote class="anchor">workspace.ts:743 commentView() · :746 unseen()</blockquote></header>
+  <div class="comment">
+    <header><strong>Q2 · "Is this unread" is written twice</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p><code>commentView</code> inlines the same test that <code>unseen()</code> holds, so S1's fix would need making in both places.</p>
+    <p class="fix">Have <code>commentView</code> call <code>this.unseen(id, comment)</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="Q3">
+  <header><blockquote class="anchor">workspace.ts:185–187 allThreads(): toView() places every anchor, then issues(loaded, await this.place(loaded)) places them again</blockquote></header>
+  <div class="comment">
+    <header><strong>Q3 · All threads places every anchor twice</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>The diffs are cached, so the cost is small. But the code says it twice, and the two could drift apart: <code>issues</code> doesn't see conflict threads' places, while <code>toView</code> does.</p>
+    <p class="fix">Count unplaced threads from <code>view.threads</code> (<code>t.lost &amp;&amp; t.lost !== "deleted"</code>). See C1.</p>
+  </div>
+</article>
+
+<article class="thread" id="Q4">
+  <header><blockquote class="anchor">package.json "package" script --ignore='…|audits)'</blockquote></header>
+  <div class="comment">
+    <header><strong>Q4 · The packaged app ships the audit reports</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>The ignore pattern names <code>audits</code>, but the folder is <code>audit</code>, so <code>audit/</code> (about 130 KB of reports) and <code>docs/</code> go into the bundle.</p>
+    <p class="fix">Change <code>audits</code> to <code>audit|docs</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="Q5">
+  <header><blockquote class="anchor">workspace.ts:497–500 watch() derives a document path from every event, folders included</blockquote></header>
+  <div class="comment">
+    <header><strong>Q5 · The watcher reports folders as changed documents</strong><span class="tag low">low</span><span class="tag confirmed">reproduced</span></header>
+    <p>Starting the first thread on <code>notes/b.md</code> reports changes for <code>.comments</code>, <code>.</code>, <code>notes</code> and <code>notes/b.md</code>. For "." the watcher runs <code>settle(".")</code>, which fails and is swallowed. It's harmless today, but it costs a refresh each time, and it's the same confusion as B2.</p>
+    <p class="fix">Skip <code>addDir</code>/<code>unlinkDir</code> under <code>.comments</code>, and map only <code>.json</code> files there to documents.</p>
+  </div>
+</article>
+
+<article class="thread" id="Q6">
+  <header><blockquote class="anchor">git.ts:158–161 renamedTo(): git add -A of every untracked file into a scratch index</blockquote></header>
+  <div class="comment">
+    <header><strong>Q6 · Looking for a rename hashes every untracked file into .git/objects</strong><span class="tag low">low</span><span class="tag confirmed">reproduced</span></header>
+    <p>Every settle of a missing document runs this: on every open, and on every change, for a deleted document whose comments are kept. With a 30 MB untracked file in thelang, each settle took about 190 ms and wrote one more loose object. Any untracked binary is re-read each time.</p>
+    <p class="fix">Add only untracked files with the missing document's extension to the scratch index. Renames rarely change it, and this skips binaries and build output.</p>
+  </div>
+</article>
+
+<article class="thread" id="Q7">
+  <header><blockquote class="anchor">workspace.ts:713–719 toView(): loop, then place roots[0] again</blockquote></header>
+  <div class="comment">
+    <header><strong>Q7 · Placing a conflicted thread takes a loop and a second pass</strong><span class="tag low">low</span><span class="tag confirmed">by reading</span></header>
+    <p>The loop breaks on the first side that places. Failing that, it places the first side again to get its reason.</p>
+    <p class="fix"><code>const places = await Promise.all(roots.map((r) =&gt; content ? this.placeAnchor(r.anchor!, content, text) : "deleted")); const place = places.find((p) =&gt; typeof p === "object") ?? places[0];</code> Four lines shorter.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="complexity">
+<h2>7 · Ways to reduce overall complexity</h2>
+
+<article class="thread" id="C1">
+  <header><blockquote class="anchor">workspace.ts:156–177 files() · :180–204 allThreads() · :874 issues() · :746 unseen()</blockquote></header>
+  <div class="comment">
+    <header><strong>C1 · One document summary for the file tree and All threads</strong></header>
+    <p><code>files()</code> and <code>allThreads()</code> each work out open and resolved counts, unread counts and attention from <code>Loaded</code>, in slightly different ways (S2, Q3). Build both from <code>toView()</code>'s result: open is threads not resolved; unread is the unseen comments in threads, orphans and conflict versions; attention is <code>issues()</code> fed with <code>view.threads</code>. Then the two can't disagree. It removes <code>unseen()</code>, the <code>conflictedRoots</code> special case and a second <code>place()</code>, about 20 lines.</p>
+  </div>
+</article>
+
+<article class="thread" id="C2">
+  <header><blockquote class="anchor">workspace.ts:430–458 restoreParent() · :405 resolveConflict()</blockquote></header>
+  <div class="comment">
+    <header><strong>C2 · One "bring back what was deleted with it" helper</strong></header>
+    <p>"Restore thread" (orphan) and "Keep the edited side" (M1) are the same operation: put back a thread's comments that the deleting commit removed. Pull the sibling loop out of <code>restoreParent</code> as <code>deletedWith(path, threadId)</code> and use it in both places. That fixes M1 at about zero net lines, and keeps the two behaviours from drifting apart.</p>
+  </div>
+</article>
+
+<article class="thread" id="C3">
+  <header><blockquote class="anchor">workspace.ts:705–706 Conflict.thread · ThreadPanel.tsx:47 filter by thread · :52 unthreaded</blockquote></header>
+  <div class="comment">
+    <header><strong>C3 · Attach reply conflicts to their thread in the main process</strong></header>
+    <p><code>toView</code> returns reply conflicts in a flat list with a <code>thread</code> id. The panel then filters them back into threads and finds the leftovers. Put them on <code>ThreadView.conflicts</code> server-side, and leave in <code>DocumentView.conflicts</code> only those whose thread is gone. That drops <code>Conflict.thread</code> and two filters, about 10 lines.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="features">
+<h2>8 · Feature suggestions</h2>
+
+<article class="thread" id="F1">
+  <header><blockquote class="anchor">StoredComment (workspace.ts:67) · CommentHeader (ThreadPanel.tsx:195)</blockquote></header>
+  <div class="comment">
+    <header><strong>F1 · Show that a comment was edited, and by whom</strong></header>
+    <p>Comments can be edited by anyone, and the author field stays the same. Store <code>editedBy</code> and <code>edited</code> (timestamp) in <code>update()</code>, and show "edited by Bob" in the header. That makes S1 visible to the user and gives M4 a correct name.</p>
+  </div>
+</article>
+
+<article class="thread" id="F2">
+  <header><blockquote class="anchor">DocumentView.tsx:121–127 missing-document card</blockquote></header>
+  <div class="comment">
+    <header><strong>F2 · Move or delete all comments of a deleted document</strong></header>
+    <p>When rename detection misses (a file split in two, or rewritten past git's 50 % similarity), the only options are restoring the file or deleting threads one at a time. "Move comments to…" (pick a file; anchors with an unknown base land unplaced, ready for Move to selection) and "Delete all comments" would cover it.</p>
+  </div>
+</article>
+
+<article class="thread" id="F3">
+  <header><blockquote class="anchor">App.tsx keyboard handlers · AllThreads.tsx</blockquote></header>
+  <div class="comment">
+    <header><strong>F3 · Next and previous unread</strong></header>
+    <p>A shortcut (for example ⌥↓ / ⌥↑) and a button that go to the next unread comment, across documents. It's the natural way to catch up after a pull, and the unread state is already there.</p>
+  </div>
+</article>
+
+<article class="thread" id="F4">
+  <header><blockquote class="anchor">AllThreads.tsx:33–35 filters</blockquote></header>
+  <div class="comment">
+    <header><strong>F4 · Filter All threads by author and type</strong></header>
+    <p>Types (issue, question, suggestion…) are stored and shown but can't be filtered on. "My threads", "Questions for me" and "Issues" are the obvious views for a review pass.</p>
+  </div>
+</article>
+</section>
+
+</div>
+</main>
+</div>
+</body>
+</html>

@@ -2,12 +2,12 @@ import { diffWords } from "diff";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CommentUpdate, CommentView, Conflict, DocumentView, Lost, Selection, ThreadView } from "../shared/api.ts";
 import type { Actions } from "./App.tsx";
-import { DateField } from "./DateField.tsx";
+import { WhenField } from "./DateField.tsx";
 import { CheckIcon, DeleteIcon, DiffIcon, EditIcon, ExternalIcon, IconButton, LinkIcon, MoveIcon, ReplyIcon } from "./icons.tsx";
 import { Markdown, MarkdownEditor } from "./Markdown.tsx";
 import { TypeField } from "./TypeField.tsx";
 import { conflictChoices } from "./conflicts.ts";
-import { classes, formatDay, useStored } from "./util.ts";
+import { classes, formatTime, useStored } from "./util.ts";
 
 /** Text written in composers and not yet sent, by what it's for, kept while the window is open. */
 const unsent = new Map<string, string>();
@@ -44,12 +44,9 @@ export function ThreadPanel({
             active={thread.id === active}
             onActivate={() => onActivate(thread.id)}
             onMove={selection ? () => onMove(thread.id) : undefined}
-            conflicts={doc.conflicts.filter((c) => c.thread === thread.id)}
             actions={actions}
         />
     ));
-    // Replies in conflict show in their thread, unless it's gone.
-    const unthreaded = doc.conflicts.filter((c) => !doc.threads.some((t) => t.id === c.thread));
     if (draft) {
         const after = doc.threads.findIndex((t) => t.resolved || (t.span && t.span.from > draft.span.from));
         cards.splice(
@@ -58,7 +55,13 @@ export function ThreadPanel({
             <section key="draft" className="thread active" ref={(card) => card?.scrollIntoView({ block: "nearest" })}>
                 <blockquote className={draftChanged ? "anchor missing" : "anchor"}>{draft.quote}</blockquote>
                 {draftChanged && <p className="original">This text has changed since you selected it. Select it again, then choose Comment.</p>}
-                <Composer label="Comment" draft={`new:${doc.path}`} onSubmit={(text) => actions.add({ ...draft, text })} onCancel={onCancelDraft} />
+                <NewComposer
+                    label="Comment"
+                    draft={`new:${doc.path}`}
+                    disabled={draftChanged}
+                    onSubmit={(text, timestamp) => actions.add({ ...draft, text, timestamp })}
+                    onCancel={onCancelDraft}
+                />
             </section>,
         );
     }
@@ -79,7 +82,8 @@ export function ThreadPanel({
                     ))}
                 </section>
             )}
-            {unthreaded.map((conflict) => (
+            {/* Replies in conflict whose thread is gone; the rest show in their thread. */}
+            {doc.conflicts.map((conflict) => (
                 <section key={conflict.id} className="thread attention">
                     <ConflictVersions conflict={conflict} actions={actions} />
                 </section>
@@ -196,7 +200,7 @@ function CommentHeader({ comment, status, children }: { comment: CommentView; st
     return (
         <header>
             <strong>{comment.author}</strong>
-            <time dateTime={comment.timestamp}>{formatDay(comment.timestamp)}</time>
+            <time dateTime={comment.timestamp}>{formatTime(comment.timestamp)}</time>
             {comment.type && <span className="type">{comment.type}</span>}
             {status && <span className="type">{status}</span>}
             {children && <menu>{children}</menu>}
@@ -222,7 +226,6 @@ function Thread({
     active,
     onActivate,
     onMove,
-    conflicts,
     actions,
 }: {
     path: string;
@@ -233,8 +236,6 @@ function Thread({
     onActivate: () => void;
     /** Moves the thread to the selected text; absent when nothing is selected. */
     onMove?: () => void;
-    /** Its replies that a merge left in conflict. */
-    conflicts: Conflict[];
     actions: Actions;
 }) {
     const ref = useRef<HTMLElement>(null);
@@ -245,7 +246,7 @@ function Thread({
         if (active) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, [active]);
     const unseen = thread.comments.some((c) => c.unseen);
-    const attention = !!thread.conflict || conflicts.length > 0;
+    const attention = !!thread.conflict || thread.replyConflicts.length > 0;
     // Resolved threads fold away, unless there's something in them to read or settle.
     const folded = thread.resolved && !opened && !unseen && !attention;
     const [first, ...rest] = thread.comments;
@@ -303,15 +304,15 @@ function Thread({
                     ) : (
                         <Comment path={path} comment={first} first onReply={() => setReplying(true)} actions={actions} />
                     )}
-                    {conflicts.map((conflict) => (
+                    {thread.replyConflicts.map((conflict) => (
                         <ConflictVersions key={conflict.id} conflict={conflict} actions={actions} />
                     ))}
                     <Replies path={path} comments={rest} marked={marked} actions={actions} />
                     {replying && (
-                        <Composer
+                        <NewComposer
                             label="Reply"
                             draft={`reply:${path}:${thread.id}`}
-                            onSubmit={(text) => actions.add({ replyTo: thread.id, text })}
+                            onSubmit={(text, timestamp) => actions.add({ replyTo: thread.id, text, timestamp })}
                             onDone={() => setReplying(false)}
                             onCancel={() => setReplying(false)}
                         />
@@ -369,10 +370,10 @@ function Reply({
             <div className="nested">
                 <Replies path={path} comments={comments} under={reply.id} marked={marked} actions={actions} />
                 {replying && (
-                    <Composer
+                    <NewComposer
                         label="Reply"
                         draft={`reply:${path}:${reply.id}`}
-                        onSubmit={(text) => actions.add({ replyTo: reply.id, text })}
+                        onSubmit={(text, timestamp) => actions.add({ replyTo: reply.id, text, timestamp })}
                         onDone={() => setReplying(false)}
                         onCancel={() => setReplying(false)}
                     />
@@ -428,12 +429,16 @@ function Comment({
                 <IconButton tip="Copy link" onClick={copyLink}>
                     {copied ? <CheckIcon /> : <LinkIcon />}
                 </IconButton>
-                <IconButton tip="Edit" onClick={() => setEditing(true)}>
-                    <EditIcon />
-                </IconButton>
-                <IconButton tip={first ? "Delete thread" : "Delete"} onClick={() => void actions.remove(comment.id)}>
-                    <DeleteIcon />
-                </IconButton>
+                {comment.mine && (
+                    <>
+                        <IconButton tip="Edit" onClick={() => setEditing(true)}>
+                            <EditIcon />
+                        </IconButton>
+                        <IconButton tip={first ? "Delete thread" : "Delete"} onClick={() => void actions.remove(comment.id)}>
+                            <DeleteIcon />
+                        </IconButton>
+                    </>
+                )}
             </CommentHeader>
             <Collapsible>
                 <Markdown value={comment.text} />
@@ -442,7 +447,7 @@ function Comment({
     );
 }
 
-/** Edits a comment's text, and its author, date and type. */
+/** Edits one of the user's own comments: its text, when it was written, and its type. */
 function CommentEditor({
     comment,
     draft,
@@ -454,23 +459,30 @@ function CommentEditor({
     onSave: (update: CommentUpdate) => Promise<boolean>;
     onDone: () => void;
 }) {
-    const [author, setAuthor] = useState(comment.author);
-    const [date, setDate] = useState(comment.timestamp.slice(0, 10));
+    const [when, setWhen] = useState<string | null>(null);
     const [type, setType] = useState(comment.type ?? "");
-    const save = (text: string) =>
-        onSave({
-            text,
-            author: author.trim() || undefined,
-            date: date === comment.timestamp.slice(0, 10) ? undefined : date,
-            type: type.trim(),
-        });
+    const save = (text: string) => onSave({ text, timestamp: when ?? undefined, type: type.trim() });
 
     return (
         <Composer label="Save" draft={draft} initial={comment.text} onSubmit={save} onDone={onDone} onCancel={onDone}>
             <header className="fields">
-                <input aria-label="Author" placeholder="Author" value={author} onChange={(e) => setAuthor(e.target.value)} />
-                <DateField value={date} onChange={setDate} />
+                <WhenField value={when ?? comment.timestamp} onChange={setWhen} />
                 <TypeField value={type} onChange={setType} />
+            </header>
+        </Composer>
+    );
+}
+
+/** A composer for a new thread or reply, written now unless another time is picked. */
+function NewComposer({
+    onSubmit,
+    ...props
+}: Omit<Parameters<typeof Composer>[0], "onSubmit" | "children"> & { onSubmit: (text: string, timestamp?: string) => Promise<boolean> }) {
+    const [when, setWhen] = useState<string | null>(null);
+    return (
+        <Composer {...props} onSubmit={(text) => onSubmit(text, when ?? undefined)}>
+            <header className="fields">
+                <WhenField value={when} onChange={setWhen} />
             </header>
         </Composer>
     );
@@ -487,6 +499,7 @@ function Composer({
     onSubmit,
     onDone,
     onCancel,
+    disabled = false,
     children,
 }: {
     label: string;
@@ -496,6 +509,8 @@ function Composer({
     onSubmit: (text: string) => Promise<boolean>;
     onDone?: () => void;
     onCancel: () => void;
+    /** Can't be sent for now, as what it's on has changed. */
+    disabled?: boolean;
     /** Fields shown above the text. */
     children?: ReactNode;
 }) {
@@ -508,7 +523,7 @@ function Composer({
     // State lags a render behind, so a second click straight after the first would see it unset.
     const submitting = useRef(false);
     const submit = async () => {
-        if (submitting.current || !text.trim()) return;
+        if (submitting.current || disabled || !text.trim()) return;
         submitting.current = true;
         setBusy(true);
         const done = await onSubmit(text.trim());
@@ -549,7 +564,7 @@ function Composer({
             {children}
             <MarkdownEditor initial={text} onChange={write} />
             <div className="actions">
-                <button className="primary" onClick={() => void submit()} disabled={busy || !text.trim()}>
+                <button className="primary" onClick={() => void submit()} disabled={busy || disabled || !text.trim()}>
                     {label}
                 </button>
                 <button onClick={cancel}>Cancel</button>

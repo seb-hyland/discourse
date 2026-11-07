@@ -346,17 +346,32 @@ test("keeping a deleted thread deleted deletes the replies added to it elsewhere
     assert.deepEqual([after.threads, after.orphans, after.conflicts], [[], [], []]);
 });
 
-test("editing a comment's date keeps its time of day and offset", async () => {
+test("timestamps are stored in UTC, picked or not, and can't be in the future", async () => {
     const ws = await workspace("text\n");
     await addThread(ws, "c", { from: 0, to: 4 });
     const [{ id, comments }] = (await ws.view("a.md")).threads;
-    await ws.update("a.md", id, { date: "2020-02-03" });
-    const [
-        {
-            comments: [edited],
-        },
-    ] = (await ws.view("a.md")).threads;
-    assert.equal(edited.timestamp, "2020-02-03" + comments[0].timestamp.slice(10));
+    assert.match(comments[0].timestamp, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    await ws.update("a.md", id, { timestamp: "2020-02-03T10:30:00+11:00" });
+    await ws.add("a.md", { replyTo: id, text: "r", timestamp: "2020-02-04T00:00:00-05:00" });
+    const [{ comments: after }] = (await ws.view("a.md")).threads;
+    assert.deepEqual(
+        after.map((c) => c.timestamp),
+        ["2020-02-02T23:30:00.000Z", "2020-02-04T05:00:00.000Z"],
+    );
+    await assert.rejects(ws.update("a.md", id, { timestamp: new Date(Date.now() + 3_600_000).toISOString() }), /hasn't come yet/);
+});
+
+test("only your own comments can be edited or deleted, but anyone's thread can be resolved, and an orphan deleted", async () => {
+    const ws = await workspace("Some text.\n");
+    const id = await othersThread(ws);
+    const [{ comments }] = (await ws.view("a.md")).threads;
+    assert.equal(comments[0].mine, undefined);
+    await assert.rejects(ws.update("a.md", id, { text: "mine now" }), /Only your own/);
+    await assert.rejects(ws.remove("a.md", id), /Only your own/);
+    await ws.update("a.md", id, { resolved: true });
+    assert.equal((await ws.view("a.md")).threads[0].resolved, true);
+    await ws.add("a.md", { replyTo: id, text: "by Ada" });
+    assert.equal((await ws.view("a.md")).threads[0].comments[1].mine, true);
 });
 
 test("search finds text in every file and comments on every document, ignoring case", async () => {
@@ -444,25 +459,18 @@ test("others' comments are unread until marked read, and unread again once edite
     assert.deepEqual(await unseen(), [undefined, undefined]);
 });
 
-test("editing someone else's comment, or giving yours to someone else, leaves it read", async () => {
+test("a read comment that's deleted and comes back is still read, and undo says what it undid", async () => {
     const ws = await workspace("Some text.\n");
-    const id = await othersThread(ws);
-    await ws.update("a.md", id, { text: "from Bob, tidied up by Ada" });
-    assert.equal((await ws.view("a.md")).threads[0].comments[0].unseen, undefined);
-
-    await ws.add("a.md", { text: "by Ada", replyTo: id });
-    const reply = (await ws.view("a.md")).threads[0].comments[1].id;
-    await ws.update("a.md", reply, { author: "Carol" });
-    assert.equal((await ws.view("a.md")).threads[0].comments[1].unseen, undefined);
-});
-
-test("a read comment that's deleted and comes back is still read", async () => {
-    const ws = await workspace("Some text.\n");
-    const id = await othersThread(ws);
-    ws.markSeen([(await ws.view("a.md")).threads[0].comments[0].version]);
+    await addThread(ws, "by Ada", { from: 0, to: 4 });
+    const [{ id }] = (await ws.view("a.md")).threads;
+    await ws.add("a.md", { replyTo: id, text: "from Bob" });
+    const file = join(ws.root, ".comments", "a.md", `${(await ws.view("a.md")).threads[0].comments[1].id}.json`);
+    await writeFile(file, (await readFile(file, "utf8")).replace('"author": "Ada"', '"author": "Bob"'));
+    ws.markSeen([(await ws.view("a.md")).threads[0].comments[1].version]);
     await ws.remove("a.md", id);
-    await ws.undo("a.md", "undo");
-    assert.equal((await ws.view("a.md")).threads[0].comments[0].unseen, undefined);
+    assert.equal(await ws.undo("a.md", "undo"), "the deletion");
+    assert.equal((await ws.view("a.md")).threads[0].comments[1].unseen, undefined);
+    assert.equal(await ws.undo("a.md", "undo"), "the reply");
 });
 
 test("on first opening a folder, others' comments are all unread, and what's read is kept", async () => {

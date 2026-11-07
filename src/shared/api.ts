@@ -21,6 +21,7 @@ export interface FileSummary {
 export interface CommentView {
     id: string;
     author: string;
+    /** When it was written, in UTC (older comments may give an offset instead). */
     timestamp: string;
     text: string;
     type?: string;
@@ -30,6 +31,8 @@ export interface CommentView {
     version: string;
     /** Set if the user hasn't read it as it is, new or edited since; never for their own. */
     unseen?: boolean;
+    /** The user wrote it, so may edit or delete it. */
+    mine?: boolean;
 }
 
 /**
@@ -51,6 +54,8 @@ export interface ThreadView {
     comments: CommentView[];
     /** If the two sides of a merge changed its first comment differently, which `comments` then has one version of. */
     conflict?: Conflict;
+    /** Its replies the two sides of a merge changed differently. */
+    replyConflicts: Conflict[];
 }
 
 /** A version of a comment in a merge conflict, from one side of the merge. */
@@ -71,8 +76,8 @@ export interface Conflict {
     sides: { label: string; commit?: { author: string; subject: string } }[];
     /** How many replies it has, which keeping it deleted deletes too. */
     replies: number;
-    /** For a reply, the thread it's in. */
-    thread?: string;
+    /** Whether settling it can be undone: not in jj, which takes the settled file as the commit's straight away. */
+    undoable: boolean;
 }
 
 /** A comment file that couldn't be read. */
@@ -87,7 +92,7 @@ export interface DocumentView {
     text: string;
     missing?: boolean;
     threads: ThreadView[];
-    /** Conflicts over replies; those over a thread's first comment are on the thread. */
+    /** Conflicts over replies whose thread is gone; others are on their thread. */
     conflicts: Conflict[];
     /** Replies to a comment that's been deleted, say by the other side of a merge; `replyTo` is unset if it began their thread. */
     orphans: CommentView[];
@@ -100,14 +105,14 @@ export interface Selection {
     quote: string;
 }
 
-/** A new thread on a selection, or a reply to the comment `replyTo`. */
-export type NewComment = { text: string } & (Selection | { replyTo: string });
+/** A new thread on a selection, or a reply to the comment `replyTo`; written now, unless another time is picked. */
+export type NewComment = { text: string; timestamp?: string } & (Selection | { replyTo: string });
 
+/** A change to a comment. Only the user's own can have their text, time or type changed. */
 export interface CommentUpdate {
     text?: string;
-    author?: string;
-    /** The day it was written, as `YYYY-MM-DD`; the time of day stays. */
-    date?: string;
+    /** When it was written, as an ISO timestamp; not in the future. */
+    timestamp?: string;
     /** An empty type removes it. */
     type?: string;
     /** For a thread's first comment: resolves or reopens the thread. */
@@ -154,6 +159,8 @@ export interface DocumentThreads {
     threads: ThreadSummary[];
     /** What else in its comments needs attention, such as "1 comment conflict to settle". */
     issues: string[];
+    /** How many of its comments the user hasn't read, if any, in threads or not. */
+    unseen?: number;
 }
 
 /** Where to search: nowhere, the open document, or the whole folder. */
@@ -188,6 +195,12 @@ export interface SearchResults {
 /** Something the user can do about an error, offered beside it. */
 export type ErrorAction = "settings";
 
+export interface MenuItem {
+    id: string;
+    label: string;
+    enabled?: boolean;
+}
+
 /** A recently opened folder. */
 export interface Recent {
     root: string;
@@ -203,13 +216,22 @@ export interface Bridge {
     add(path: string, comment: NewComment): Promise<DocumentView>;
     update(path: string, id: string, update: CommentUpdate): Promise<DocumentView>;
     remove(path: string, id: string): Promise<DocumentView>;
-    undo(path: string, direction: "undo" | "redo"): Promise<DocumentView>;
+    /** Undoes or redoes the document's last change, saying what it was (null if none), with the document as it is now if it's still there. */
+    undo(path: string, direction: "undo" | "redo"): Promise<{ doc: DocumentView | null; label: string | null }>;
     /** Settles a conflict with one of its versions, by index, or keeps the first with the second as a reply to it. */
     resolveConflict(path: string, id: string, version: number | "both"): Promise<DocumentView>;
     /** Brings back the deleted comment an orphaned reply answers. */
     restoreParent(path: string, replyId: string): Promise<DocumentView>;
     /** Brings back a deleted document from history. */
     restoreDocument(path: string): Promise<DocumentView>;
+    /** Moves every comment on a deleted document to another, answering with that one. */
+    moveAll(path: string, to: string): Promise<DocumentView>;
+    /** Deletes every comment on a deleted document. */
+    removeAll(path: string): Promise<void>;
+    /** Shows a file or folder, or the folder of a document's comments, in the system's file manager. */
+    reveal(path: string, what: "file" | "comments"): Promise<void>;
+    /** Shows a context menu of these items where the pointer is, answering with the id of the one chosen, or null. */
+    menu(items: MenuItem[]): Promise<string | null>;
     openInEditor(path: string, line: number, column: number): Promise<void>;
     /** Opens a comment file, by its path in the workspace, in the user's editor. */
     openCommentFile(file: string): Promise<void>;

@@ -41,7 +41,7 @@ export function AllThreads({
 
     const threads = documents?.flatMap((d) => d.threads) ?? [];
     const open = threads.filter((t) => !t.resolved).length;
-    const unread = threads.reduce((n, t) => n + (t.unseen ?? 0), 0);
+    const unread = documents?.reduce((n, d) => n + (d.unseen ?? 0), 0) ?? 0;
     const attention = threads.some((t) => t.attention) || documents?.some((d) => d.issues.length > 0);
     const shown = (documents ?? [])
         .map((d) => ({

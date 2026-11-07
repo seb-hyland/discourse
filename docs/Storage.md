@@ -30,7 +30,8 @@ When creating a comment with id `<id>` on some file at `<doc path>` in some dire
 }
 ```
 
-- `timestamp`: ISO 8601, local time with UTC offset (`YYYY-MM-DDThh:mm:ss±hh:mm`).
+- `author`: the git user name (else jj's) of whoever wrote it. Only they edit or delete it in the app.
+- `timestamp`: ISO 8601 in UTC, with milliseconds (`YYYY-MM-DDThh:mm:ss.sssZ`), so timestamps sort as text. Readers SHOULD also accept any ISO 8601 offset, as written before this format; `scripts/migrate-timestamps.ts` rewrites those.
 - `type`: absent when empty.
 - A root comment (starts a thread) MUST have `anchor` and MUST NOT have `thread` or `replyTo`. It MAY have `resolved`.
 - A reply MUST have `thread` (root `<id>`) and MUST NOT have `anchor`. It has `replyTo` (reply `<id>`) iff it answers another reply.

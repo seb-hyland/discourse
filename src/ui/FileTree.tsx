@@ -1,10 +1,13 @@
-import { useEffect, useReducer, useState } from "react";
-import type { FileSummary } from "../shared/api.ts";
+import { useEffect, useReducer, type MouseEvent } from "react";
+import type { FileSummary, MenuItem } from "../shared/api.ts";
+import { api } from "./api.ts";
 import { BackIcon, ChevronIcon, CommentIcon, ForwardIcon, IconButton, SearchIcon, SettingsIcon, SidebarIcon } from "./icons.tsx";
 import { useStored } from "./util.ts";
 
 interface Folder {
     name: string;
+    /** Its path in the workspace. */
+    path: string;
     folders: Map<string, Folder>;
     files: FileSummary[];
     openThreads: number;
@@ -17,43 +20,68 @@ export function FileTree({
     files,
     current,
     onOpen,
+    onError,
     onSearch,
     searching,
     onSettings,
+    picking,
 }: {
     files: FileSummary[];
     current: string;
     onOpen: (path: string) => void;
+    onError: (e: unknown) => void;
     onSearch: () => void;
     /** The search panel is open. */
     searching: boolean;
     onSettings: () => void;
+    /** Picking a file to move `from`'s comments to: every file is shown, and clicking one picks it. */
+    picking?: { from: string; onPick: (path: string) => void; onCancel: () => void };
 }) {
-    const [commentedOnly, setCommentedOnly] = useState(false);
+    const [commentedOnly, setCommentedOnly] = useStored("files.commentedOnly", false);
     const [collapsed, setCollapsed] = useStored("files.collapsed", false);
     const { canGoBack, canGoForward } = useHistory();
     const openThreads = files.reduce((n, f) => n + f.openThreads, 0);
     const unseen = files.reduce((n, f) => n + (f.unseen ?? 0), 0);
-    const shown = files.filter((f) => !commentedOnly || f.openThreads + f.resolvedThreads > 0);
+    const shown = files.filter((f) => picking || !commentedOnly || f.openThreads + f.resolvedThreads > 0);
+    const hidden = collapsed && !picking;
+    useEffect(() => {
+        if (!picking) return;
+        const onKeyDown = (e: KeyboardEvent) => e.key === "Escape" && picking.onCancel();
+        addEventListener("keydown", onKeyDown);
+        return () => removeEventListener("keydown", onKeyDown);
+    }, [picking]);
 
     return (
-        <nav className={collapsed ? "files collapsed" : "files"}>
-            {!collapsed && (
+        <nav className={hidden ? "files collapsed" : picking ? "files picking" : "files"}>
+            {!hidden && (
                 <div className="tree">
-                    <button className={current === "" ? "all-threads current" : "all-threads"} onClick={() => onOpen("")}>
-                        <CommentIcon />
-                        <span className="name">All threads</span>
-                        <Count open={openThreads} unseen={unseen} />
-                    </button>
+                    {picking ? (
+                        <div className="pick-banner">
+                            <span>Pick a file to move the comments to</span>
+                            <button onClick={picking.onCancel}>Cancel</button>
+                        </div>
+                    ) : (
+                        <button className={current === "" ? "all-threads current" : "all-threads"} onClick={() => onOpen("")}>
+                            <CommentIcon />
+                            <span className="name">All threads</span>
+                            <Count open={openThreads} unseen={unseen} />
+                        </button>
+                    )}
                     <hr className="divider" />
-                    <FolderContents folder={buildTree(shown)} current={current} onOpen={onOpen} />
+                    <FolderContents
+                        folder={buildTree(shown)}
+                        current={current}
+                        onOpen={picking ? picking.onPick : onOpen}
+                        unpickable={picking && ((f) => f.missing || f.path === picking.from)}
+                        onMenu={(e, path, file) => void showMenu(e, path, file, onError)}
+                    />
                 </div>
             )}
             <footer>
                 <IconButton tip={collapsed ? "Show sidebar" : "Hide sidebar"} onClick={() => setCollapsed(!collapsed)}>
                     <SidebarIcon />
                 </IconButton>
-                {!collapsed && (
+                {!hidden && (
                     <>
                         <IconButton tip="Back" disabled={!canGoBack} onClick={() => history.back()}>
                             <BackIcon />
@@ -78,6 +106,24 @@ export function FileTree({
     );
 }
 
+/** A file's or folder's context menu: to open it elsewhere, or find it or its comments in the file manager. */
+async function showMenu(e: MouseEvent, path: string, file: FileSummary | undefined, onError: (e: unknown) => void) {
+    e.preventDefault();
+    const commented = !!file && (file.openThreads + file.resolvedThreads > 0 || !!file.attention);
+    const items: MenuItem[] = [
+        ...(file ? [{ id: "editor", label: "Open in editor", enabled: !file.missing }] : []),
+        { id: "file", label: "Show in file manager", enabled: !file?.missing },
+        ...(commented ? [{ id: "comments", label: "Show comments directory" }] : []),
+    ];
+    try {
+        const chosen = await api.menu(items);
+        if (chosen === "editor") await api.openInEditor(path, 1, 1);
+        else if (chosen === "file" || chosen === "comments") await api.reveal(path, chosen);
+    } catch (e) {
+        onError(e);
+    }
+}
+
 /** Whether the window can go back or forward through the files and comments opened. */
 function useHistory() {
     const [, update] = useReducer((n: number) => n + 1, 0);
@@ -88,13 +134,26 @@ function useHistory() {
     return { canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward };
 }
 
-function FolderContents({ folder, current, onOpen }: { folder: Folder; current: string; onOpen: (path: string) => void }) {
+function FolderContents({
+    folder,
+    current,
+    onOpen,
+    unpickable,
+    onMenu,
+}: {
+    folder: Folder;
+    current: string;
+    onOpen: (path: string) => void;
+    /** While picking a file, those that can't be picked. */
+    unpickable?: (file: FileSummary) => boolean | undefined;
+    onMenu: (e: MouseEvent, path: string, file?: FileSummary) => void;
+}) {
     return (
         <ul>
             {[...folder.folders.values()].map((sub) => (
                 <li key={sub.name}>
                     <details open>
-                        <summary>
+                        <summary onContextMenu={(e) => onMenu(e, sub.path)}>
                             <ChevronIcon />
                             <span className="name">{sub.name}</span>
                             {/* Shown only while the folder is folded, by the stylesheet. */}
@@ -104,13 +163,18 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
                                 attention={sub.attention ? `${sub.attention} ${sub.attention === 1 ? "file needs" : "files need"} attention` : undefined}
                             />
                         </summary>
-                        <FolderContents folder={sub} current={current} onOpen={onOpen} />
+                        <FolderContents folder={sub} current={current} onOpen={onOpen} unpickable={unpickable} onMenu={onMenu} />
                     </details>
                 </li>
             ))}
             {folder.files.map((f) => (
                 <li key={f.path}>
-                    <button className={f.path === current ? "current" : undefined} onClick={() => onOpen(f.path)}>
+                    <button
+                        className={f.path === current ? "current" : undefined}
+                        disabled={unpickable?.(f)}
+                        onClick={() => onOpen(f.path)}
+                        onContextMenu={(e) => onMenu(e, f.path, f)}
+                    >
                         <span
                             className={f.missing ? "name missing" : "name"}
                             data-tip={f.missing ? "Deleted, but its comments remain; open it to restore it" : undefined}
@@ -126,13 +190,13 @@ function FolderContents({ folder, current, onOpen }: { folder: Folder; current: 
 }
 
 function buildTree(files: FileSummary[]): Folder {
-    const root = folder("");
+    const root = folder("", "");
     for (const file of files) {
         let at = root;
         at.openThreads += file.openThreads;
         at.unseen += file.unseen ?? 0;
         for (const name of file.path.split("/").slice(0, -1)) {
-            if (!at.folders.has(name)) at.folders.set(name, folder(name));
+            if (!at.folders.has(name)) at.folders.set(name, folder(name, at.path ? `${at.path}/${name}` : name));
             at = at.folders.get(name)!;
             at.openThreads += file.openThreads;
             at.unseen += file.unseen ?? 0;
@@ -151,14 +215,10 @@ function compact(f: Folder): Folder {
     return f;
 }
 
-function folder(name: string): Folder {
-    return { name, folders: new Map(), files: [], openThreads: 0, unseen: 0, attention: 0 };
+function folder(name: string, path: string): Folder {
+    return { name, path, folders: new Map(), files: [], openThreads: 0, unseen: 0, attention: 0 };
 }
 
-/**
- * How many open threads a file or folder has, picked out if the user has comments in it to read.
- * With only resolved threads to read, a dot says so instead.
- */
 /** Open threads, coloured if any are unread, or red if something needs settling; "!" if that's all there is. */
 function Count({ open, unseen, attention }: { open: number; unseen: number; attention?: string }) {
     const unread = unseen === 0 ? undefined : unseen === 1 ? "1 unread comment" : `${unseen} unread comments`;
