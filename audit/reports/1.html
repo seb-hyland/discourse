@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discourse Audit 1</title>
+<link rel="stylesheet" href="../core/audit.css">
+</head>
+<body>
+<div class="app">
+<nav class="files" aria-label="Contents">
+  <ul>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#fix-first">Fix first <span class="count">5</span></a></li>
+    <li><div class="folder">findings</div>
+      <ul>
+        <li><a href="#bugs">Bugs <span class="count">12</span></a></li>
+        <li><a href="#errors">Error messages <span class="count">10</span></a></li>
+        <li><a href="#style">Code quality <span class="count">5</span></a></li>
+      </ul>
+    </li>
+    <li><div class="folder">proposals</div>
+      <ul>
+        <li><a href="#complexity">Reducing complexity <span class="count">4</span></a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+
+<main>
+<div class="page">
+<header class="document-header"><h1>audit/reports/1.html · Discourse (MRSF sidecars) · 2026-11-05</h1></header>
+
+<section id="overview">
+<h2>Discourse audit 1</h2>
+<p class="lede">The first audit, of the MRSF sidecar design. Most of what it found traces back to positional anchors that need constant rewriting and one shared comment list per document. Section 4 proposes the per-comment-file design that later replaced it.</p>
+
+<div class="summary">
+  <div class="stat"><b>12</b><span>bugs</span></div>
+  <div class="stat"><b>10</b><span>poor error messages</span></div>
+  <div class="stat"><b>~500</b><span>lines removable with per-comment files (estimate)</span></div>
+  <div class="stat"><b>20/20</b><span>tests pass · <code>tsc</code> clean</span></div>
+</div>
+<p class="unchecked">Severity wasn't assessed, and the file references point at code that has since been removed (this audit was written as Markdown and moved into this format later).</p>
+</section>
+
+<section id="fix-first">
+<h2>Fix first</h2>
+<p class="section-intro">Added when this audit was moved into the shared format: the five most severe bugs, in the audit's own order.</p>
+<ol class="top">
+  <li><a href="#B1">B1</a> · Deleting a thread's first comment splits its replies into separate threads.</li>
+  <li><a href="#B2">B2</a> · Merely viewing a document rewrites its tracked sidecar.</li>
+  <li><a href="#B3">B3</a> · Re-anchoring jumps to the wrong copy of repeated text, and B2 saves the wrong position.</li>
+  <li><a href="#B4">B4</a> · After a failed load, actions are sent to a different file than the one on screen.</li>
+  <li><a href="#B5">B5</a> · The local API accepts any Host and cross-origin POSTs.</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="bugs">
+<h2>1 · Bugs and incorrect behaviour</h2>
+<p class="section-intro">Most severe first.</p>
+
+<article class="thread first" id="B1">
+  <header><blockquote class="anchor">merge.ts:60 · comments.ts:32 comments.remove → @mrsf/cli removeComment</blockquote></header>
+  <div class="comment">
+    <header><strong>B1 · Deleting a thread's first comment splits the thread into several threads</strong><span class="tag confirmed">confirmed</span></header>
+    <p><code>removeComment</code> makes every direct reply of a root into a <strong>new root</strong>. Deleting the first comment of a thread with 2 replies leaves 2 separate threads on the same text; on <code>spec/object.md</code> this took 2 threads to 3. The confirm dialog says "Its replies are kept", which implies they stay one thread. The merge path does the same. The doc comment at <code>comments.ts:32</code> is wrong too: replies don't "move up to the parent", they become separate threads.</p>
+    <p class="fix">When deleting a root, promote the oldest reply and re-point its siblings to it. Alternatively, use <code>removeComment(…, {cascade})</code> and change the dialog to say replies are deleted.</p>
+  </div>
+</article>
+
+<article class="thread first" id="B2">
+  <header><blockquote class="anchor">workspace.ts:155–160 Workspace.view → storePositions + save</blockquote></header>
+  <div class="comment">
+    <header><strong>B2 · Loading a document writes to tracked files</strong><span class="tag confirmed">confirmed</span><span class="tag muted">intended</span></header>
+    <p>After adding two lines to <code>spec/object.md</code>, one <code>GET /api/document</code> rewrote <code>line: 5</code> to <code>line: 7</code> in the committed sidecar and also wrote <code>.cache/</code>. This is deliberate, to keep stored positions in step with the text, but has side effects:</p>
+    <ul>
+      <li>Viewing produces VCS diffs. When the viewer is also the editor, those diffs belong with the doc edit and are fine.</li>
+      <li>When two people view the same edit, identical rewrites merge cleanly. They conflict only when the two machines re-anchor <em>differently</em>, which happens because the snapshot is local (B3).</li>
+      <li>A bad re-anchor (B3) gets saved to disk without anyone noticing.</li>
+      <li>The watcher picks up the write and fires another refresh.</li>
+    </ul>
+  </div>
+</article>
+
+<article class="thread first" id="B3">
+  <header><blockquote class="anchor">.comments/.cache (gitignored) · resolveAnchor fallback</blockquote></header>
+  <div class="comment">
+    <header><strong>B3 · Re-anchoring jumps to the wrong copy of repeated text</strong><span class="tag confirmed">confirmed</span></header>
+    <p>The snapshot cache is gitignored, so a collaborator who pulls never has a snapshot matching the stored positions. Those spans fall back to <code>resolveAnchor</code>, which favours the old line number. Test: doc <code>"foo bar\nfoo bar\n"</code> with a comment on the second <code>foo</code>, then <code>intro\n</code> added at the top. The comment moves to the <strong>first</strong> <code>foo</code>. Because of B2, that wrong position is then saved.</p>
+  </div>
+</article>
+
+<article class="thread first" id="B4">
+  <header><blockquote class="anchor">App.tsx:38 refresh()</blockquote></header>
+  <div class="comment">
+    <header><strong>B4 · A failed load leaves the old document on screen, and actions go to the new path</strong><span class="tag confirmed">confirmed</span></header>
+    <p>Opening <code>#notes/nope.md</code> shows an error popup but keeps rendering <code>spec/object.md</code>. <code>path</code> is now <code>nope.md</code>, so the next comment, resolve or delete is sent to the wrong file.</p>
+    <p>Separately, <code>refresh</code> has no cancellation, so switching files quickly can show file A's response under file B's hash <span class="tag plausible">plausible</span>.</p>
+  </div>
+</article>
+
+<article class="thread first" id="B5">
+  <header><blockquote class="anchor">server routes · no Host/Origin middleware</blockquote></header>
+  <div class="comment">
+    <header><strong>B5 · Local API has no Host/Origin check</strong><span class="tag confirmed">confirmed</span></header>
+    <ul>
+      <li>A request with <code>Host: attacker.example</code> is served. A DNS-rebinding page could therefore read every workspace document (<code>/api/document</code>, <code>/api/raw</code>) and change comments.</li>
+      <li>A cross-origin <code>POST /api/undo</code> (a "simple" request with no preflight) <strong>was executed</strong>. <code>/api/resolve</code> is open to the same thing.</li>
+    </ul>
+    <p class="fix">A few lines of middleware that reject any <code>Host</code> other than <code>localhost:&lt;port&gt;</code> and any <code>Origin</code> other than the app's own.</p>
+  </div>
+</article>
+
+<article class="thread" id="B6">
+  <header><blockquote class="anchor">startServer: editor = async () =&gt; undefined</blockquote></header>
+  <div class="comment">
+    <header><strong>B6 · "Open in editor" can never work in browser mode (npm start)</strong><span class="tag confirmed">by reading</span></header>
+    <p>The default editor always fails. The error then tells the user to use "the gear below the files, or ⌘,", which only exists in Electron.</p>
+    <p class="fix">Hide the button when no editor is configured, or read the settings file in the server too.</p>
+  </div>
+</article>
+
+<article class="thread" id="B7">
+  <header><blockquote class="anchor">events.ts:6 ignores only .git, .jj, node_modules</blockquote></header>
+  <div class="comment">
+    <header><strong>B7 · The file watcher reacts to gitignored folders</strong><span class="tag plausible">plausible · high likelihood</span></header>
+    <p>thelang has <code>.obsidian/</code>, which Obsidian rewrites constantly while it's open, and other repos have <code>target/</code>, <code>dist/</code> and so on. Every write causes a full refresh: <code>git ls-files</code>, reading and parsing every sidecar, and re-loading (and possibly re-writing, B2) the open doc.</p>
+    <p class="fix">Only forward paths that are in <code>files()</code> or are sidecars.</p>
+  </div>
+</article>
+
+<article class="thread" id="B8">
+  <header><blockquote class="anchor">ThreadPanel.tsx:238 submit()</blockquote></header>
+  <div class="comment">
+    <header><strong>B8 · Composer can submit twice</strong><span class="tag plausible">plausible</span></header>
+    <p><code>submit</code> has no in-flight state, so pressing ⌘⏎ twice creates two comments. Failures also become unhandled rejections: <code>run</code> rethrows, and the caller does <code>void onSubmit()</code>.</p>
+  </div>
+</article>
+
+<article class="thread" id="B9">
+  <header><blockquote class="anchor">merge.ts:22 mergeSidecarText(base, "", "")</blockquote></header>
+  <div class="comment">
+    <header><strong>B9 · Merging with both sides deleted produces an invalid sidecar</strong><span class="tag confirmed">confirmed</span></header>
+    <p>The result is <code>comments: []</code> with no <code>mrsf_version</code> or <code>document</code>.</p>
+    <p class="fix">Delete the file or return an empty string.</p>
+  </div>
+</article>
+
+<article class="thread" id="B10">
+  <header><blockquote class="anchor">Workspace.undo</blockquote></header>
+  <div class="comment">
+    <header><strong>B10 · Undo doesn't restore the snapshot</strong><span class="tag plausible">plausible</span></header>
+    <p><code>undo</code> writes back an old sidecar whose positions were relative to an older <code>.cache</code> snapshot, which isn't rolled back with it. Usually the <code>slice === selected_text</code> check catches this and falls back to search, which is B3's weaker path. Where the slices happen to match, the span silently moves by the wrong diff.</p>
+  </div>
+</article>
+
+<article class="thread" id="B11">
+  <header><blockquote class="anchor">main.ts:50 setWindowOpenHandler → openLink → workspace.documentPath()</blockquote></header>
+  <div class="comment">
+    <header><strong>B11 · A bad link can crash the Electron main process</strong><span class="tag plausible">plausible</span></header>
+    <p><code>documentPath()</code> throws synchronously for links like <code>../x.pdf</code> or anything matching <code>isOwnFile</code>. Electron shows the "A JavaScript error occurred in the main process" dialog.</p>
+  </div>
+</article>
+
+<article class="thread" id="B12">
+  <header><blockquote class="anchor">various</blockquote></header>
+  <div class="comment">
+    <header><strong>B12 · Smaller issues</strong></header>
+    <ul>
+      <li><strong>Copied comment links</strong> are root-relative <code>/path#comment-id</code> (<code>App.tsx:109</code>). They break on GitHub and in any other renderer. Opened in a browser they also clash with the hash router: the path becomes <code>comment-…</code>.</li>
+      <li><strong>In-page anchors</strong> (<code>[x](#heading)</code>) do nothing: they resolve to the current path and re-set it.</li>
+      <li><strong>File filter vs. "Only show commented files":</strong> typing in the filter silently turns the toggle off, but it still looks on (<code>FileTree.tsx:24</code>).</li>
+      <li><strong>Deleted documents:</strong> sidecars whose document no longer exists still appear in the tree, and clicking one shows the raw ENOENT error <span class="tag plausible">plausible</span>.</li>
+      <li><strong>jj-only repos:</strong> <code>listFiles</code> swallows <code>git</code> failing, so a non-colocated jj repo shows an empty sidebar with no message (<code>workspace.ts:247</code>).</li>
+      <li><strong>Timestamps:</strong> new comments are written as UTC <code>…Z</code> with milliseconds, while existing ones (thelang) keep local offsets. Editing the date runs <code>toISOString()</code>, which drops the original offset too.</li>
+      <li><strong>Stale launch config:</strong> <code>.claude/launch.json</code> pointed at <code>~/Documents/sidemark/…</code>, which doesn't exist. It was changed during the audit to point at this repo and a scratch copy of thelang.</li>
+      <li><strong>Performance:</strong> every comment, read-only ones included, gets its own Crepe instance (ProseMirror plus Vue). Long threads mean dozens of editors. Crepe also brings Vue into the bundle (there's a Vue feature-flag warning in the console).</li>
+    </ul>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="errors">
+<h2>2 · Poor error messages</h2>
+<p class="section-intro">Popups as the user sees them, and a suggested replacement.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Where</th><th>What the user sees</th><th>Suggest</th></tr></thead>
+<tbody>
+<tr id="E1"><td>E1</td><td>Opening a missing file</td><td><code>ENOENT: no such file or directory, open '/private/tmp/…/notes/nope.md'</code> (full absolute path)</td><td>"notes/nope.md doesn't exist any more."</td></tr>
+<tr id="E2"><td>E2</td><td><code>workspace.ts:99,106</code></td><td><code>not a document: x</code>, <code>not a text file: x</code></td><td>Sentence case, say why ("…is a comments file", "…isn't text")</td></tr>
+<tr id="E3"><td>E3</td><td><code>comments.ts:48</code></td><td><code>no comment 07e1662a-…</code> (raw UUID). Happens whenever a comment was deleted elsewhere or by a pull</td><td>"This comment was deleted (perhaps elsewhere). Reloaded." and refresh</td></tr>
+<tr id="E4"><td>E4</td><td><code>routes.ts:68</code></td><td><code>missing ?path=</code></td><td>Developer-only; fine as a 400, but shouldn't reach a popup</td></tr>
+<tr id="E5"><td>E5</td><td>Malformed body</td><td><code>Cannot use 'in' operator to search for 'replyTo' in undefined</code> <span class="tag confirmed">confirmed</span></td><td>Validate the body, or reject non-JSON with 415</td></tr>
+<tr id="E6"><td>E6</td><td><code>api.ts:14</code></td><td><code>POST /api/comments failed (500 Internal Server Error). The app may need restarting.</code> (HTTP verb and URL shown to the user)</td><td>"Couldn't save the comment. Is the app still running?"</td></tr>
+<tr id="E7"><td>E7</td><td><code>editor.ts:4</code></td><td>Multi-line text with a JSON array assuming macOS and Emacs, plus "⌘," on every platform and in browser mode</td><td>One line ("No editor set. Open Settings to choose one.") plus a Settings button. Put the example in the settings file as a comment or example key</td></tr>
+<tr id="E8"><td>E8</td><td>Malformed <code>settings.json</code></td><td>Raw <code>JSON.parse</code> error (<code>Unexpected token…</code>)</td><td>"settings.json isn't valid JSON (line N)."</td></tr>
+<tr id="E9"><td>E9</td><td>jj resolve failure</td><td><code>Command failed: jj resolve --tool discourse --config merge-tools.discourse.program="…" …</code> plus stderr</td><td>Show jj's stderr only, with a lead-in</td></tr>
+<tr id="E10"><td>E10</td><td><code>resolve.ts:22</code></td><td>"…but no merge in progress to resolve them from."</td><td>Say what to do: "Fix the markers in &lt;sidecar path&gt; by hand, or re-run the merge."</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="style">
+<h2>3 · Code quality and style</h2>
+
+<article class="thread" id="Q1">
+  <header><blockquote class="anchor">workspace.ts:24 · resolve.ts:7 · routes.ts · anchoring.ts · editor.ts</blockquote></header>
+  <div class="comment">
+    <header><strong>Q1 · Duplication</strong></header>
+    <ul>
+      <li>Five "read file or fallback" variants, each with a different sentinel: <code>readOrNull</code> returns <code>null</code>; the inline <code>.catch(() =&gt; undefined)</code> in <code>load</code> appears twice; <code>read</code> in jjMergeTool returns <code>""</code>; <code>stage</code> in resolve.ts returns <code>""</code>; <code>parseOrNull</code>. Pick one.</li>
+      <li><code>const run = promisify(execFile)</code> is in both <code>workspace.ts:24</code> and <code>resolve.ts:7</code>.</li>
+      <li>Offset↔line/column logic exists three times: <code>editor.position</code>, plus <code>anchoring.lineStarts</code>/<code>toSpan</code>/<code>setPosition</code>.</li>
+      <li><code>discoverSidecar</code> runs 3× per <code>change()</code> (in <code>load</code>, in <code>change</code>, in <code>save</code>), and the sidecar is read twice. <code>load</code> could return <code>{ sidecarPath, raw }</code>.</li>
+      <li><code>files()</code> derives the document path two ways: <code>sidecarToDocument</code> when the sidecar has conflict markers, <code>doc.document</code> otherwise. Use the sidecar path for both. It's also sorted on the server and again in <code>buildTree</code>.</li>
+      <li>Every route repeats <code>res.json(await workspace.view(path(req)))</code>. One <code>mutate(route, fn)</code> helper would remove most of <code>routes.ts</code>.</li>
+      <li><code>SettingsIcon</code> re-spells <code>Icon</code>'s <code>&lt;svg&gt;</code> wrapper. Let <code>Icon</code> take children.</li>
+    </ul>
+  </div>
+</article>
+
+<article class="thread" id="Q2">
+  <header><blockquote class="anchor">TypeField.tsx · onScreen.ts · anchoring.ts:112 · Workspace history</blockquote></header>
+  <div class="comment">
+    <header><strong>Q2 · Hand-rolled where a platform or library feature exists</strong></header>
+    <ul>
+      <li><code>TypeField.tsx</code> (64 lines with keyboard nav, highlight state and popover) reimplements <code>&lt;input list&gt;</code> + <code>&lt;datalist&gt;</code>.</li>
+      <li><code>onScreen.ts</code> does manual popover flipping. <code>@floating-ui/dom</code> is already in the tree via Crepe, and CSS anchor positioning works in Electron's Chromium.</li>
+      <li><code>anchoring.ts</code> <code>diffEdits</code>/<code>shift</code> partly duplicates what <code>@mrsf/cli</code> already exports: <code>createRevisionProjection</code> and <code>reanchorDocument</code>, which use <code>commit</code> plus git diff. The app also <strong>deletes</strong> <code>commit</code> whenever a comment moves (<code>anchoring.ts:112</code>), which turns off the spec's own mechanism.</li>
+      <li><code>Workspace</code> undo/redo history (~40 lines, plus <code>written</code> tracking) is a second history layer on top of VCS.</li>
+    </ul>
+  </div>
+</article>
+
+<article class="thread" id="Q3">
+  <header><blockquote class="anchor">DateField · CommentUpdate.resolved · Actions.copyLink · Tooltip</blockquote></header>
+  <div class="comment">
+    <header><strong>Q3 · Features that are probably unneeded</strong></header>
+    <ul>
+      <li>Editing <strong>author and timestamp</strong> of any comment: <code>DateField</code>, <code>react-day-picker</code> and its CSS overrides, author input, server fields. In a review tool this lets anyone rewrite who said what and when. Delete it; keep <code>type</code>, using <code>&lt;select&gt;</code> or <code>&lt;datalist&gt;</code>.</li>
+      <li><code>CommentUpdate.resolved</code> "applies to the whole thread when given for its first comment". The UI only ever sends it for roots, and <code>CommentView.resolved</code> is never read in the UI. Make it a thread-level operation.</li>
+      <li><code>Actions.copyLink</code> isn't a server action and doesn't belong in that interface.</li>
+      <li>The <code>Tooltip</code> component rewrites every <code>title</code> attribute in the DOM, including Crepe's.</li>
+    </ul>
+  </div>
+</article>
+
+<article class="thread" id="Q4">
+  <header><blockquote class="anchor">App.tsx:86 · App.tsx:139 · editor.ts · sourceMap.ts · styles.css</blockquote></header>
+  <div class="comment">
+    <header><strong>Q4 · Construction</strong></header>
+    <ul>
+      <li><code>App.tsx:86</code>: the global keydown <code>useEffect</code> has no deps and re-subscribes on every render.</li>
+      <li><code>App.tsx:139</code>: magic <code>setTimeout(…, 500)</code> to wait for a scroll.</li>
+      <li><code>openInEditor</code> bypasses <code>run</code> and duplicates its error handling.</li>
+      <li><code>editor.ts</code> has a 1.5 s "if it hasn't failed yet it worked" heuristic. It also has Electron UI wording (<code>SETUP</code>) inside a server module.</li>
+      <li><code>sourceMap.ts</code> maps by greedy per-character <code>indexOf</code> with a 1000-char lookahead. A rendered character with no nearby source match (an entity, a renderer rewrite) can make the cursor jump up to 1000 characters ahead. See <a href="#C3">C3</a> for an exact alternative.</li>
+      <li>About 48 selectors in <code>styles.css</code> restyle Crepe or Milkdown internals, plus 4 <code>!important</code>s. That's the cost of using a WYSIWYG editor as a read-only renderer.</li>
+      <li><strong>Naming</strong> is split between "Discourse" (package, title, window) and "sidemark" (<code>window.sidemark</code>, console log, launch config). Pick one.</li>
+    </ul>
+  </div>
+</article>
+
+<article class="thread" id="Q5">
+  <header><blockquote class="anchor">doc comments across src/</blockquote></header>
+  <div class="comment">
+    <header><strong>Q5 · Comments that restate the code</strong></header>
+    <p>Many doc comments restate the signature: <code>/** Replace from..to with text. */</code> on <code>Edit</code>, <code>/** Make span the text the comment is about. */</code>, <code>/** Where settings are kept… */</code>, <code>/** An icon button… */</code>, <code>// Feather-style line icons</code>, and most one-line JSDoc on private helpers.</p>
+    <p>The ones worth keeping explain <em>why</em>: the <code>writeSidecar</code> corruption note, <code>ELECTRON_RUN_AS_NODE</code>, the Crepe Escape-ordering note, and why <code>commit</code> is deleted. Roughly 40–50% could go.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="complexity">
+<h2>4 · Ways to reduce overall complexity</h2>
+
+<article class="thread" id="C1">
+  <header><blockquote class="anchor">@mrsf/cli</blockquote></header>
+  <div class="comment">
+    <header><strong>C1 · Is MRSF earning its keep?</strong></header>
+    <p>Used from <code>@mrsf/cli</code>: parse and <code>toYaml</code>, <code>discoverSidecar</code>, <code>addComment</code>/<code>editComment</code>/<code>removeComment</code>, <code>getThreads</code>, <code>resolveAnchor</code> (as a fallback), <code>syncHash</code>, <code>getGitUserName</code>, <code>loadConfig</code>.</p>
+    <p>Worked around: the sidecar writer (it corrupts files, per the code comment), the reanchor engine (replaced by the snapshot diff), <code>removeComment</code> semantics (B1), <code>commit</code> (deleted on move), and the line/column position model, which only means anything relative to an exact text version. That is why a private <code>.cache</code> snapshot directory is needed at all.</p>
+    <p>The spec gives a schema and interoperability with other MRSF tools. In exchange it adds the parts that cause most of the complexity: positional anchors that need constant rewriting, and one shared list per document that conflicts on every concurrent add. Unless MRSF tool compatibility is a real requirement, it's costing more than it gives.</p>
+  </div>
+</article>
+
+<article class="thread" id="C2">
+  <header><blockquote class="anchor">merge.ts · jjMergeTool.ts · resolve.ts · anchoring.ts · .cache</blockquote></header>
+  <div class="comment">
+    <header><strong>C2 · A design that merges cleanly in git and jj with no merge code</strong></header>
+    <p><strong>One file per comment</strong> (or per thread), with a text-quote anchor in place of line/column:</p>
+<pre><code>.comments/spec/object.md/07e1662a.yaml
+  reply_to: …            # absent for roots
+  author, timestamp, resolved, type, text
+  quote: { exact: "the number of [immediate] slots", prefix: "…otherwise, this is ", suffix: " (8 bytes each)…" }</code></pre>
+    <ul>
+      <li><strong>Adds never conflict.</strong> Different files, so this works in git, in jj, and with any merge strategy. A true conflict can only happen when two people edit the <em>same</em> comment, and then a normal text conflict in a 10-line file is fine to resolve by hand.</li>
+      <li><strong>Deletes are file deletes.</strong> No more "deleted vs. moved" rules.</li>
+      <li><strong>Anchors are never rewritten.</strong> A W3C Web Annotation <code>TextQuoteSelector</code> (exact + prefix + suffix) is re-found on every load. Hypothesis's <code>approx-string-match</code> / <code>dom-anchor-text-quote</code> do the fuzzy match, and the prefix/suffix settle repeated text, which fixes B3. Files change only when a <em>comment</em> changes, which fixes B2.</li>
+    </ul>
+    <p>This deletes <code>merge.ts</code>, <code>jjMergeTool.ts</code>, <code>resolve.ts</code> and their tests; the conflict card and <code>MergeConflict</code> UI; <code>x_conflict_text</code>; the <code>.cache</code> snapshot directory; most of <code>anchoring.ts</code>; <code>storePositions</code> and the write-on-view path; and the <code>written</code>/history bookkeeping if undo goes too. Estimate: ~500 lines of server code plus the <code>diff</code> dependency.</p>
+    <p class="fix">If MRSF compatibility must stay: stop writing positions on view (write them only when the user edits that comment), add <code>x_prefix</code>/<code>x_suffix</code> for disambiguation, and register <code>mergeSidecarText</code> as a git merge driver so git merges never leave markers. jj still needs the Resolve button, because it has no merge drivers.</p>
+  </div>
+</article>
+
+<article class="thread" id="C3">
+  <header><blockquote class="anchor">MarkdownView · sourceMap.ts · Crepe</blockquote></header>
+  <div class="comment">
+    <header><strong>C3 · Markdown rendering</strong></header>
+    <p>A read-only Milkdown/Crepe instance (ProseMirror, Vue, ~48 CSS overrides) renders the document, then a heuristic <code>SourceMap</code> maps it back to source. Alternatives:</p>
+    <ul>
+      <li><strong>Exact and lighter:</strong> render with <code>remark</code>/<code>mdast-util-to-hast</code>. Every mdast node has <code>position.start.offset</code>/<code>end.offset</code>, so give each text node a <code>data-offset</code>. Selection → source offset becomes exact arithmetic, with no <code>sourceMap.ts</code> and no Crepe for reading. Use the same renderer for read-only comment bodies (fixes the per-comment-editor cost in B12). Keep Crepe only for the composer, if you want WYSIWYG there.</li>
+      <li><strong>Simplest:</strong> show <code>.md</code> in the existing <code>CodeView</code> with <code>@codemirror/lang-markdown</code>, styled for reading. This deletes <code>MarkdownView</code>, <code>sourceMap.ts</code> and its test, and the highlight plugin. It costs rendered images and tables.</li>
+    </ul>
+  </div>
+</article>
+
+<article class="thread" id="C4">
+  <header><blockquote class="anchor">undo/redo · DateField · TypeField · entrypoints · watcher</blockquote></header>
+  <div class="comment">
+    <header><strong>C4 · Other cuts</strong></header>
+    <ul>
+      <li>Drop undo/redo. Comments live in VCS and delete already asks for confirmation. That's ~45 lines and the <code>history</code>/<code>written</code> state.</li>
+      <li>Drop author/date editing (<code>DateField</code>, <code>react-day-picker</code>).</li>
+      <li>Replace <code>TypeField</code> with <code>&lt;datalist&gt;</code>.</li>
+      <li>Pick one entrypoint. Electron <em>plus</em> a standalone browser server means two settings paths (B6) and a Vite-middleware server per window. If Electron is the product, the standalone mode is only a dev convenience. If the browser is the product, the Electron shell is ~200 lines that add little beyond a folder picker.</li>
+      <li>Watch only what matters (B7). Or, given an SSE stream already exists, have it say <em>which</em> doc changed and only refetch <code>/files</code> when a sidecar changes.</li>
+    </ul>
+  </div>
+</article>
+</section>
+
+</div>
+</main>
+</div>
+</body>
+</html>

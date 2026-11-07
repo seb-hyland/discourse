@@ -4,124 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discourse Audit 3</title>
-<style>
-@font-face { font-family: "Libron"; src: url("../src/ui/fonts/libron/Libron-Regular.woff2") format("woff2"); font-weight: 400; }
-@font-face { font-family: "Libron"; src: url("../src/ui/fonts/libron/Libron-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; }
-@font-face { font-family: "Libron"; src: url("../src/ui/fonts/libron/Libron-Bold.woff2") format("woff2"); font-weight: 700; }
-@font-face { font-family: "Monaspace Xenon"; src: url("../src/ui/fonts/monaspace/MonaspaceXenonVar.woff2") format("woff2"); font-weight: 200 800; }
-
-:root {
-  color-scheme: light;
-  --paper: #fff5ed; --parchment: #fff1e0; --dust: #f0e6d3; --bark: #d6cab4; --mud: #9c7f5f;
-  --sand: #91846e; --dusk: #5a5040; --ink: #3c3836;
-  --green: #365e36; --blue: #3e4c75; --amber: #8a6020; --red: #8f2525; --plum: #644185;
-  --green-bg: #f4fff0; --blue-bg: #dfdfed; --amber-bg: #ffe9cc; --red-bg: #fce0de;
-  --bg: var(--paper); --surface: var(--parchment); --border: var(--bark); --border-active: var(--mud);
-  --text: var(--ink); --muted: var(--dusk); --faint: var(--sand);
-  --highlight: oklch(from var(--amber) 0.86 0.15 h / 0.5);
-  --highlight-active: oklch(from var(--amber) 0.8 0.17 h / 0.75);
-  --sans: "Libron", Georgia, serif;
-  --mono: "Monaspace Xenon", ui-monospace, Menlo, monospace;
-  font: 15px/1.6 var(--sans);
-  color: var(--text);
-  background: var(--bg);
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); }
-section, .thread, tr { scroll-margin-top: 3.5rem; }
-::selection { background: var(--blue-bg); }
-
-.app { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 0; min-height: 100vh; }
-
-nav.files {
-  position: sticky; top: 0.75rem; align-self: start;
-  margin: 0.75rem 0 0.75rem 0.75rem; max-height: calc(100vh - 1.5rem); overflow: auto;
-  background: var(--bg); border: 1.5px solid var(--border); border-radius: 10px; padding: 0.6rem 0.4rem;
-  font-size: 14px;
-}
-nav.files ul { list-style: none; margin: 0; padding: 0; }
-nav.files li ul { margin-left: 0.85rem; padding-left: 0.5rem; border-left: 1px solid var(--border); }
-nav.files a {
-  display: flex; justify-content: space-between; gap: 0.5rem;
-  padding: 0.15rem 0.5rem; border-radius: 6px; color: var(--text); text-decoration: none;
-}
-nav.files a:hover { background: color-mix(in srgb, var(--dust) 60%, transparent); }
-nav.files .folder { padding: 0.35rem 0.5rem 0.1rem; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
-.count { color: var(--muted); font-size: 12px; }
-
-main { min-width: 0; padding: 0 1.5rem 30vh; }
-.page { max-width: 50rem; margin: 0 auto; }
-.document-header { position: sticky; top: 0; z-index: 2; background: var(--bg); padding-top: 0.85rem; }
-.document-header h1 {
-  margin: 0; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border);
-  font-size: 13px; font-weight: 500; color: var(--muted);
-}
-h2 { font-size: 1.55rem; margin: 2.6rem 0 0.3rem; }
-h3 { font-size: 1.1rem; margin: 1.8rem 0 0.4rem; }
-p { margin: 0.5rem 0; }
-.lede { font-size: 17px; }
-code, pre, .mono { font-family: var(--mono); font-size: 0.82em; }
-code { background: var(--dust); padding: 0.05em 0.3em; border-radius: 3px; }
-pre { background: var(--parchment); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.8rem; overflow-x: auto; line-height: 1.45; }
-pre code { background: none; padding: 0; font-size: 1em; }
-a { color: var(--blue); }
-mark { background: var(--highlight); color: inherit; border-radius: 2px; padding: 0 1px; }
-.muted { color: var(--muted); }
-.section-intro { color: var(--muted); margin-bottom: 1rem; }
-
-/* Thread-card findings, as in the comment panel. */
-.thread {
-  background: var(--bg); border: 1.5px solid var(--border); border-radius: 10px;
-  padding: 0.75rem 0.9rem; margin: 0.75rem 0;
-}
-.thread:target { border-color: var(--border-active); box-shadow: 0 0 0 3px var(--highlight); }
-.thread.high { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
-.thread > header { display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.35rem; }
-.thread blockquote.anchor {
-  flex: 1; margin: 0; padding-left: 0.5rem; border-left: 3px solid var(--highlight-active);
-  color: var(--muted); font-size: 12.5px; font-family: var(--mono); line-height: 1.45; white-space: pre-wrap;
-}
-.thread.high blockquote.anchor { border-color: var(--red); }
-.comment header { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: baseline; margin: 0.55rem 0 0.1rem; }
-.comment header strong { font-size: 15.5px; }
-.type { font-size: 12px; color: var(--muted); }
-.tag { font-size: 11.5px; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
-.tag.confirmed { background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 35%, var(--border)); color: var(--green); }
-.tag.plausible { background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 35%, var(--border)); color: var(--amber); }
-.tag.high { background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
-.tag.medium { background: var(--amber-bg); color: var(--amber); }
-.tag.low { color: var(--faint); }
-.fix { margin-top: 0.4rem; padding-left: 0.7rem; border-left: 2px solid var(--border); color: var(--text); }
-.fix::before { content: "Fix · "; color: var(--muted); font-size: 13px; }
-
-table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 14px; }
-th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.55rem; border-bottom: 1px solid var(--border); }
-th { font-weight: 700; font-size: 12.5px; color: var(--muted); border-bottom: 1.5px solid var(--border); }
-td.ok { color: var(--green); white-space: nowrap; }
-td.bad { color: var(--red); white-space: nowrap; }
-td.meh { color: var(--amber); white-space: nowrap; }
-.table-wrap { overflow-x: auto; }
-
-.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.6rem; margin: 1rem 0; }
-.stat { border: 1.5px solid var(--border); border-radius: 10px; padding: 0.6rem 0.8rem; background: var(--surface); }
-.stat b { display: block; font-size: 1.5rem; line-height: 1.2; }
-.stat span { color: var(--muted); font-size: 13px; }
-
-ol.top li, ul.plain li { margin: 0.3rem 0; }
-.verdict { background: var(--surface); border: 1.5px solid var(--border-active); border-radius: 10px; padding: 0.8rem 1rem; margin: 1rem 0; }
-
-@media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; }
-  nav.files { position: static; max-height: none; margin: 0.75rem 16px 0; }
-  main { padding: 0 16px 20vh; }
-}
-</style>
+<link rel="stylesheet" href="../core/audit.css">
 </head>
 <body>
 <div class="app">
 <nav class="files" aria-label="Contents">
   <ul>
     <li><a href="#overview">Overview</a></li>
+    <li><a href="#fix-first">Fix first <span class="count">5</span></a></li>
     <li><div class="folder">findings</div>
       <ul>
         <li><a href="#merge">Merge &amp; conflicts <span class="count">10</span></a></li>
@@ -136,13 +26,12 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
         <li><a href="#complexity">Reducing complexity</a></li>
       </ul>
     </li>
-    <li><a href="#method">Method</a></li>
   </ul>
 </nav>
 
 <main>
 <div class="page">
-<header class="document-header"><h1>audits/3.html · Discourse at e9e0e35 (seen message tracking)</h1></header>
+<header class="document-header"><h1>audit/reports/3.html · Discourse @ e9e0e35 · 2026-11-06</h1></header>
 
 <section id="overview">
 <h2>Discourse audit 3</h2>
@@ -154,8 +43,12 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   <div class="stat"><b>7</b><span>reproduced in scratch repos</span></div>
   <div class="stat"><b>55/55</b><span>tests pass · <code>tsc</code> clean</span></div>
 </div>
+<p class="unchecked">The Electron app wasn't run; the visual findings (S1, U-series) come from reading the components and CSS.</p>
 
-<h3>Fix first</h3>
+</section>
+
+<section id="fix-first">
+<h2>Fix first</h2>
 <ol class="top">
   <li><a href="#M1">M1</a> · Deleting a thread conflicts with the other side's <em>automatic</em> re-pin, and the card shows two identical-looking versions.</li>
   <li><a href="#M2">M2</a> · Renaming or moving a document strands all its comments under the old path; "Restore file" makes a duplicate.</li>
@@ -190,7 +83,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
 </table>
 </div>
 
-<article class="thread high" id="M1">
+<article class="thread high first" id="M1">
   <header><blockquote class="anchor">workspace.ts:659 mergeComment() · :428 anchor comparison only when both sides kept the comment</blockquote></header>
   <div class="comment">
     <header><strong>M1 · Deleting a thread conflicts with an automatic re-pin</strong><span class="tag high">high</span><span class="tag confirmed">reproduced</span></header>
@@ -199,7 +92,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   </div>
 </article>
 
-<article class="thread high" id="M2">
+<article class="thread high first" id="M2">
   <header><blockquote class="anchor">workspace.ts:623 commentFile() keyed by document path · :358 restoreDocument()</blockquote></header>
   <div class="comment">
     <header><strong>M2 · A renamed or moved document loses its comments</strong><span class="tag high">high</span><span class="tag confirmed">reproduced</span></header>
@@ -286,7 +179,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
 <h2>2 · Seen tracking</h2>
 <p class="section-intro">Read state is a set of <code>id + sha1(text)</code> on this machine. The model is sound and survives branch switches and undo. The gaps are in what gets marked and what gets shown.</p>
 
-<article class="thread high" id="S1">
+<article class="thread high first" id="S1">
   <header><blockquote class="anchor">ThreadPanel.tsx:454 unseenClasses → "unseen", "new" | "edited" · styles.css has no .comment.unseen / .new / .edited</blockquote></header>
   <div class="comment">
     <header><strong>S1 · Which comment is unread is never shown</strong><span class="tag high">high</span><span class="tag confirmed">by reading</span></header>
@@ -354,7 +247,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
 <section id="bugs">
 <h2>3 · Bugs and incorrect behaviour</h2>
 
-<article class="thread high" id="B1">
+<article class="thread high first" id="B1">
   <header><blockquote class="anchor">workspace.ts:488 anchor(): only checks bounds, takes quote = text.slice(span) · App.tsx:416 onMove(span: selection!)</blockquote></header>
   <div class="comment">
     <header><strong>B1 · A draft or move can anchor to the wrong text</strong><span class="tag high">high</span><span class="tag confirmed">by reading</span></header>
@@ -363,7 +256,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   </div>
 </article>
 
-<article class="thread high" id="B2">
+<article class="thread high first" id="B2">
   <header><blockquote class="anchor">workspace.ts:517–525 readOrNull(file) → await storeBlob(…) → write({ ...onDisk, anchor })</blockquote></header>
   <div class="comment">
     <header><strong>B2 · Re-pinning can overwrite a comment edit saved at the same time</strong><span class="tag high">high</span><span class="tag plausible">plausible</span></header>
@@ -658,17 +551,6 @@ results.files.push(...spans.slice(0, limit).map((span) =&gt; ({ path, span, prev
 </article>
 </section>
 
-<section id="method">
-<h2>Method</h2>
-<ul class="plain">
-  <li>Read all of <code>src/</code> (~4,000 lines excluding CSS) at <code>e9e0e35</code>; skimmed <code>styles.css</code> for the classes the components emit.</li>
-  <li><code>npm test</code>: 55/55 pass. <code>tsc</code>: clean.</li>
-  <li>Reproduced merge scenarios with a script driving <code>Workspace</code> against fresh git repositories in a scratch directory: delete vs re-pin, both sides re-pinning under a conflicted document, rename, delete-thread vs reply, resolve vs reply, conflict + seen state, rebase, and a jj 0.44 colocated merge. <code>~/Documents/thelang</code> was not modified.</li>
-  <li>Not run: the Electron app itself. Visual findings (S1, U-series) come from reading the components and CSS, not screenshots.</li>
-  <li>Tags: <span class="tag confirmed">reproduced</span> = observed in a scratch repo; <span class="tag confirmed">by reading</span> = certain from code; <span class="tag plausible">plausible</span> = a race or timing case not reproduced.</li>
-  <li>Excluded per the 2026-11 rulings: replacing Crepe, dropping nested replies, confirm dialogs for delete.</li>
-</ul>
-</section>
 </div>
 </main>
 </div>

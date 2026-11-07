@@ -1,0 +1,163 @@
+<!doctype html>
+<!--
+  Copy to audit/reports/<n>.html and fill in. Rules are in audit/core/AUDIT.md.
+  Use only the classes shown here; never add a <style> block.
+  Delete every example and every comment like this one.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discourse Audit N</title>
+<link rel="stylesheet" href="../core/audit.css">
+</head>
+<body>
+<div class="app">
+<nav class="files" aria-label="Contents">
+  <ul>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#fix-first">Fix first <span class="count">5</span></a></li>
+    <li><div class="folder">findings</div>
+      <ul>
+        <li><a href="#merge">Merge &amp; conflicts <span class="count">0</span></a></li>
+        <li><a href="#seen">Seen tracking <span class="count">0</span></a></li>
+        <li><a href="#bugs">Bugs <span class="count">0</span></a></li>
+        <li><a href="#ux">UX <span class="count">0</span></a></li>
+        <li><a href="#errors">Error messages <span class="count">0</span></a></li>
+        <li><a href="#style">Code quality <span class="count">0</span></a></li>
+      </ul>
+    </li>
+    <li><div class="folder">proposals</div>
+      <ul>
+        <li><a href="#complexity">Reducing complexity <span class="count">0</span></a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+
+<main>
+<div class="page">
+<header class="document-header"><h1>audit/reports/N.html · Discourse @ abc1234 · YYYY-MM-DD</h1></header>
+
+<section id="overview">
+<h2>Discourse audit N</h2>
+<p class="lede">Two or three sentences: what changed since the last audit, overall verdict, and the main areas of concern. <mark>Highlight</mark> the single most important sentence.</p>
+
+<div class="summary">
+  <div class="stat"><b>0</b><span>findings</span></div>
+  <div class="stat"><b>0</b><span>high severity</span></div>
+  <div class="stat"><b>0</b><span>reproduced in scratch repos</span></div>
+  <div class="stat"><b>0/0</b><span>tests pass · <code>tsc</code> clean</span></div>
+</div>
+<p class="unchecked">What wasn't run or reproduced, and which findings that leaves less certain (e.g. the Electron app wasn't run, so U1–U4 come from reading the CSS).</p>
+</section>
+
+<section id="fix-first">
+<h2>Fix first</h2>
+<ol class="top">
+  <!-- 5–6 items. Each links to a finding whose card carries class "first". -->
+  <li><a href="#M1">M1</a> · One sentence on what goes wrong for the user.</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="merge">
+<h2>1 · Merge and conflict behaviour</h2>
+<p class="section-intro">How scenarios were run (git, jj, rebase). The table summarises; cards give detail.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>Scenario</th><th>What happens now</th><th>Verdict</th></tr>
+<tr><td>Both sides edit different fields</td><td>Merged field by field</td><td class="ok">good</td></tr>
+<tr><td>Both sides edit the text</td><td>Conflict card, one button per side</td><td class="meh">ok · no diff</td></tr>
+<tr><td>Document renamed</td><td>Comments stranded under the old path</td><td class="bad"><a href="#M1">M1</a></td></tr>
+</table>
+</div>
+
+<!-- Fix-first, high-severity finding: classes "thread high first". -->
+<article class="thread high first" id="M1">
+  <header><blockquote class="anchor">workspace.ts:123 functionName() · other.ts:45</blockquote></header>
+  <div class="comment">
+    <header><strong>M1 · Title stating the problem as the user meets it</strong><span class="tag high">high</span><span class="tag confirmed">reproduced</span></header>
+    <p>What happens, with the concrete steps or scenario that shows it.</p>
+    <p class="fix">The smallest change that fixes it.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="seen">
+<h2>2 · Seen tracking</h2>
+
+<!-- Ordinary finding: class "thread". Severity medium or low. -->
+<article class="thread" id="S1">
+  <header><blockquote class="anchor">ThreadPanel.tsx:88</blockquote></header>
+  <div class="comment">
+    <header><strong>S1 · Title</strong><span class="tag medium">medium</span><span class="tag confirmed">by reading</span></header>
+    <p>Description.</p>
+    <p class="fix">Fix.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="bugs">
+<h2>3 · Bugs and incorrect behaviour</h2>
+
+<article class="thread" id="B1">
+  <header><blockquote class="anchor">App.tsx:40</blockquote></header>
+  <div class="comment">
+    <header><strong>B1 · Title</strong><span class="tag low">low</span><span class="tag plausible">plausible</span></header>
+    <p>Description.</p>
+    <p class="fix">Fix.</p>
+  </div>
+</article>
+</section>
+
+<!-- ============================================================ -->
+<section id="ux">
+<h2>4 · UX: popups, tooltips, buttons</h2>
+<!-- U1, U2, … -->
+</section>
+
+<!-- ============================================================ -->
+<section id="errors">
+<h2>5 · Error messages</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Where</th><th>What the user sees</th><th>Suggest</th></tr></thead>
+<tbody>
+<tr id="E1"><td>E1</td><td><code>workspace.ts:227</code></td><td><code>Can't read a.md: EACCES: permission denied</code></td><td>"You don't have permission to read a.md."</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="style">
+<h2>6 · Code quality and style</h2>
+<!-- Q1, Q2, … -->
+</section>
+
+<!-- ============================================================ -->
+<section id="complexity">
+<h2>7 · Ways to reduce overall complexity</h2>
+
+<!-- Proposals: no severity tag. -->
+<article class="thread" id="C1">
+  <header><blockquote class="anchor">files affected</blockquote></header>
+  <div class="comment">
+    <header><strong>C1 · Proposal</strong></header>
+    <p>What it removes and what it costs, with a line estimate.</p>
+  </div>
+</article>
+
+<!-- Optional, for a section that answers a yes/no question. -->
+<div class="verdict"><strong>Verdict:</strong> one-paragraph answer.</div>
+</section>
+
+</div>
+</main>
+</div>
+</body>
+</html>

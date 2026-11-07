@@ -3,125 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Discourse Audit</title>
-<style>
-@font-face { font-family: "Libron"; src: url("src/ui/fonts/libron/Libron-Regular.woff2") format("woff2"); font-weight: 400; }
-@font-face { font-family: "Libron"; src: url("src/ui/fonts/libron/Libron-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; }
-@font-face { font-family: "Libron"; src: url("src/ui/fonts/libron/Libron-Bold.woff2") format("woff2"); font-weight: 700; }
-@font-face { font-family: "Monaspace Xenon"; src: url("src/ui/fonts/monaspace/MonaspaceXenonVar.woff2") format("woff2"); font-weight: 200 800; }
-
-:root {
-  color-scheme: light;
-  --paper: #fff5ed; --parchment: #fff1e0; --dust: #f0e6d3; --bark: #d6cab4; --mud: #9c7f5f;
-  --sand: #91846e; --dusk: #5a5040; --ink: #3c3836;
-  --green: #365e36; --blue: #3e4c75; --amber: #8a6020; --red: #8f2525; --plum: #644185;
-  --green-bg: #f4fff0; --blue-bg: #dfdfed; --amber-bg: #ffe9cc; --red-bg: #fce0de;
-  --bg: var(--paper); --surface: var(--parchment); --border: var(--bark); --border-active: var(--mud);
-  --text: var(--ink); --muted: var(--dusk); --faint: var(--sand);
-  --highlight: oklch(from var(--amber) 0.86 0.15 h / 0.5);
-  --highlight-active: oklch(from var(--amber) 0.8 0.17 h / 0.75);
-  --sans: "Libron", Georgia, serif;
-  --mono: "Monaspace Xenon", ui-monospace, Menlo, monospace;
-  font: 15px/1.6 var(--sans);
-  color: var(--text);
-  background: var(--bg);
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); }
-section, .thread, tr { scroll-margin-top: 3.5rem; }
-::selection { background: var(--blue-bg); }
-
-.app { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 0; min-height: 100vh; }
-
-nav.files {
-  position: sticky; top: 0.75rem; align-self: start;
-  margin: 0.75rem 0 0.75rem 0.75rem; max-height: calc(100vh - 1.5rem); overflow: auto;
-  background: var(--bg); border: 1.5px solid var(--border); border-radius: 10px; padding: 0.6rem 0.4rem;
-  font-size: 14px;
-}
-nav.files ul { list-style: none; margin: 0; padding: 0; }
-nav.files li ul { margin-left: 0.85rem; padding-left: 0.5rem; border-left: 1px solid var(--border); }
-nav.files a {
-  display: flex; justify-content: space-between; gap: 0.5rem;
-  padding: 0.15rem 0.5rem; border-radius: 6px; color: var(--text); text-decoration: none;
-}
-nav.files a:hover { background: color-mix(in srgb, var(--dust) 60%, transparent); }
-nav.files .folder { padding: 0.35rem 0.5rem 0.1rem; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
-.count { color: var(--muted); font-size: 12px; }
-
-main { min-width: 0; padding: 0 1.5rem 30vh; }
-.page { max-width: 50rem; margin: 0 auto; }
-.document-header { position: sticky; top: 0; z-index: 2; background: var(--bg); padding-top: 0.85rem; }
-.document-header h1 {
-  margin: 0; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border);
-  font-size: 13px; font-weight: 500; color: var(--muted);
-}
-h2 { font-size: 1.55rem; margin: 2.6rem 0 0.3rem; }
-h3 { font-size: 1.1rem; margin: 1.8rem 0 0.4rem; }
-p { margin: 0.5rem 0; }
-.lede { font-size: 17px; }
-code, pre, .mono { font-family: var(--mono); font-size: 0.82em; }
-code { background: var(--dust); padding: 0.05em 0.3em; border-radius: 3px; }
-pre { background: var(--parchment); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.8rem; overflow-x: auto; line-height: 1.45; }
-pre code { background: none; padding: 0; font-size: 1em; }
-a { color: var(--blue); }
-mark { background: var(--highlight); color: inherit; border-radius: 2px; padding: 0 1px; }
-.muted { color: var(--muted); }
-.section-intro { color: var(--muted); margin-bottom: 1rem; }
-
-/* Thread-card findings, as in the comment panel. */
-.thread {
-  background: var(--bg); border: 1.5px solid var(--border); border-radius: 10px;
-  padding: 0.75rem 0.9rem; margin: 0.75rem 0;
-}
-.thread:target { border-color: var(--border-active); box-shadow: 0 0 0 3px var(--highlight); }
-.thread.high { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
-.thread > header { display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.35rem; }
-.thread blockquote.anchor {
-  flex: 1; margin: 0; padding-left: 0.5rem; border-left: 3px solid var(--highlight-active);
-  color: var(--muted); font-size: 12.5px; font-family: var(--mono); line-height: 1.45; white-space: pre-wrap;
-}
-.thread.high blockquote.anchor { border-color: var(--red); }
-.comment header { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: baseline; margin: 0.55rem 0 0.1rem; }
-.comment header strong { font-size: 15.5px; }
-.type { font-size: 12px; color: var(--muted); }
-.tag { font-size: 11.5px; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
-.tag.confirmed { background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 35%, var(--border)); color: var(--green); }
-.tag.plausible { background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 35%, var(--border)); color: var(--amber); }
-.tag.high { background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
-.tag.medium { background: var(--amber-bg); color: var(--amber); }
-.tag.low { color: var(--faint); }
-.fix { margin-top: 0.4rem; padding-left: 0.7rem; border-left: 2px solid var(--border); color: var(--text); }
-.fix::before { content: "Fix · "; color: var(--muted); font-size: 13px; }
-
-table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 14px; }
-th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.55rem; border-bottom: 1px solid var(--border); }
-th { font-weight: 700; font-size: 12.5px; color: var(--muted); border-bottom: 1.5px solid var(--border); }
-td.ok { color: var(--green); white-space: nowrap; }
-td.bad { color: var(--red); white-space: nowrap; }
-td.meh { color: var(--amber); white-space: nowrap; }
-.table-wrap { overflow-x: auto; }
-
-.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.6rem; margin: 1rem 0; }
-.stat { border: 1.5px solid var(--border); border-radius: 10px; padding: 0.6rem 0.8rem; background: var(--surface); }
-.stat b { display: block; font-size: 1.5rem; line-height: 1.2; }
-.stat span { color: var(--muted); font-size: 13px; }
-
-ol.top li, ul.plain li { margin: 0.3rem 0; }
-.verdict { background: var(--surface); border: 1.5px solid var(--border-active); border-radius: 10px; padding: 0.8rem 1rem; margin: 1rem 0; }
-
-@media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; }
-  nav.files { position: static; max-height: none; margin: 0.75rem 16px 0; }
-  main { padding: 0 16px 20vh; }
-}
-</style>
+<title>Discourse Audit 2</title>
+<link rel="stylesheet" href="../core/audit.css">
 </head>
 <body>
 <div class="app">
 <nav class="files" aria-label="Contents">
   <ul>
     <li><a href="#overview">Overview</a></li>
+    <li><a href="#fix-first">Fix first <span class="count">5</span></a></li>
     <li><div class="folder">findings</div>
       <ul>
         <li><a href="#bugs">Bugs <span class="count">19</span></a></li>
@@ -136,16 +26,15 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
         <li><a href="#anchoring">Blobs &amp; offsets?</a></li>
       </ul>
     </li>
-    <li><a href="#method">Method</a></li>
   </ul>
 </nav>
 
 <main>
 <div class="page">
-<header class="document-header"><h1>AUDIT.html · discourse @ 0b6394a · 2026-11-06</h1></header>
+<header class="document-header"><h1>audit/reports/2.html · Discourse @ 0b6394a · 2026-11-06</h1></header>
 
 <section id="overview">
-<h2>Discourse audit</h2>
+<h2>Discourse audit 2</h2>
 <p class="lede">The redesign has fixed most of the problems in the 2026-11-05 audit: per-comment files, field-wise merging, no MRSF, no HTTP server. What remains falls into three areas. <mark>Diff-based anchoring</mark> can put a highlight on the wrong text or freeze the app. <mark>Provisional re-pinning</mark> creates conflicts and writes that nobody asked for. And there is a lot of UI machinery that could be removed.</p>
 
 <div class="summary">
@@ -154,8 +43,12 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   <div class="stat"><b>~400</b><span>lines of TS/CSS removable (estimate)</span></div>
   <div class="stat"><b>26/26</b><span>tests pass · <code>tsc</code> clean</span></div>
 </div>
+<p class="unchecked">The Electron UI wasn't run; the visual findings (B14–B16) come from reading the CSS and JSX.</p>
 
-<h3>Fix first</h3>
+</section>
+
+<section id="fix-first">
+<h2>Fix first</h2>
 <ol class="top">
   <li><a href="#B1">B1</a>: when a paragraph moves, the highlight silently lands on a different paragraph.</li>
   <li><a href="#B2">B2</a>: an unbounded word diff runs on Electron's main process. A heavily edited document took 13.8&nbsp;s and froze every window.</li>
@@ -163,7 +56,6 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   <li><a href="#M6">M6</a>: if two branches re-pin the same anchor, the user gets a conflict between two versions that look identical.</li>
   <li><a href="#M8">M8</a>: during a rebase, the conflict card doesn't say which version is yours.</li>
 </ol>
-<p class="muted">Tags: <span class="tag confirmed">confirmed</span> means I reproduced it with a script against <code>workspace.ts</code> and real git/jj repos. <span class="tag plausible">plausible</span> means I found it by reading the code. I didn't run the Electron UI, so every visual item is <em>plausible</em>.</p>
 </section>
 
 <!-- ───────────────────────── BUGS ───────────────────────── -->
@@ -171,7 +63,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
 <h2>1 · Bugs and incorrect behaviour</h2>
 <p class="section-intro">Most severe first.</p>
 
-<article class="thread high" id="B1">
+<article class="thread high first" id="B1">
   <header><blockquote class="anchor">workspace.ts:277 place() → anchoring.ts:28 diffEdits()</blockquote></header>
   <div class="comment">
     <header><strong>B1 · A moved paragraph takes its comment to the wrong text</strong><span class="tag high">high</span><span class="tag confirmed">confirmed</span></header>
@@ -180,7 +72,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   </div>
 </article>
 
-<article class="thread high" id="B2">
+<article class="thread high first" id="B2">
   <header><blockquote class="anchor">anchoring.ts:38 diffWordsWithSpace(before, after)   // in the Electron main process</blockquote></header>
   <div class="comment">
     <header><strong>B2 · A large diff freezes every window</strong><span class="tag high">high</span><span class="tag confirmed">confirmed</span></header>
@@ -189,7 +81,7 @@ ol.top li, ul.plain li { margin: 0.3rem 0; }
   </div>
 </article>
 
-<article class="thread high" id="B3">
+<article class="thread high first" id="B3">
   <header><blockquote class="anchor">App.tsx:152  …!files.some(f => f.path === target)) return void api.openFile(target)
 main.ts:100  handle("openFile") → shell.openPath(file)</blockquote></header>
   <div class="comment">
@@ -347,9 +239,9 @@ editor.ts:3   `In Settings (⌘,), set "editor" …`</blockquote></header>
 <tr><td>M4</td><td>Both branches edit the same comment's text</td><td>The card shows both versions, and choosing one settles it.</td><td class="meh">~ no side labels (M8)</td></tr>
 <tr><td>M5</td><td>One branch deletes the thread, the other adds a reply</td><td>The unchanged root is deleted automatically. The new reply becomes an orphan with "Restore thread", which brings the root back from history.</td><td class="ok">✓ restore offered</td></tr>
 <tr id="M5b"><td>M5b</td><td>One branch deletes the thread, the other <em>resolves</em> it and adds a reply</td><td>Card 1 offers "Deleted / Keep this version" and doesn't mention the new reply. After "Keep it deleted", card 2 appears for the orphaned reply and offers to restore the thread you just deleted.</td><td class="meh">~ two steps, a little contradictory</td></tr>
-<tr id="M6"><td>M6</td><td>Both branches edit the <em>document</em> while the anchor's base isn't pushed (so both re-pin)</td><td><code>anchor</code> is compared as one field, so it conflicts. In the variant where only the anchors changed, the card says "Two branches changed this comment differently" and shows <b>two identical comments</b>. In the variant where branch B also edited the text, the user has to give up B's text to keep A's anchor.</td><td class="bad">✗ obvious, should auto-resolve</td></tr>
+<tr class="first" id="M6"><td>M6</td><td>Both branches edit the <em>document</em> while the anchor's base isn't pushed (so both re-pin)</td><td><code>anchor</code> is compared as one field, so it conflicts. In the variant where only the anchors changed, the card says "Two branches changed this comment differently" and shows <b>two identical comments</b>. In the variant where branch B also edited the text, the user has to give up B's text to keep A's anchor.</td><td class="bad">✗ obvious, should auto-resolve</td></tr>
 <tr id="M7"><td>M7</td><td>The document itself conflicts</td><td>Viewing it during the conflict re-pins anchors onto the text <em>with conflict markers</em>, stored as a loose blob. After a manual fix it maps back, but the quote lost a character (<code>from A.</code> → <code>from A</code>).</td><td class="meh">~ skip re-pin while unmerged</td></tr>
-<tr id="M8"><td>M8</td><td>Rebase onto a branch that edited the same comment</td><td>Versions are listed as <code>[THEIR edit, MY edit]</code>. In a rebase, git's "ours" is upstream, and the card has no labels. The author and timestamp are the same on both, so the user can't tell which one is theirs.</td><td class="bad">✗ unintuitive</td></tr>
+<tr class="first" id="M8"><td>M8</td><td>Rebase onto a branch that edited the same comment</td><td>Versions are listed as <code>[THEIR edit, MY edit]</code>. In a rebase, git's "ours" is upstream, and the card has no labels. The author and timestamp are the same on both, so the user can't tell which one is theirs.</td><td class="bad">✗ unintuitive</td></tr>
 <tr id="M9"><td>M9</td><td>jj colocated: two parents edit the same comment</td><td>jj writes stages 1–3 to the git index, so the card works, and settling it removes jj's markers.</td><td class="ok">✓ works</td></tr>
 <tr id="M10"><td>M10</td><td>One branch deletes the <em>document</em>, the other edits its comments</td><td>Merges cleanly. The document shows "This file has been deleted" and the threads show B7's impossible instruction. No restore is offered.</td><td class="bad">✗ no restore offered</td></tr>
 <tr><td>M11</td><td>jj conflicts with more than two sides, or a comment deleted only in the working tree</td><td><code>unmerged()</code> reads stages 2 and 3 only. <code>beforeDeletion</code> only finds deletions that were committed, so an uncommitted delete gives "isn't in the history".</td><td class="meh">~ plausible, rare</td></tr>
@@ -358,14 +250,14 @@ editor.ts:3   `In Settings (⌘,), set "editor" …`</blockquote></header>
 </div>
 
 <h3>Suggested changes</h3>
-<article class="thread">
+<article class="thread first">
   <header><blockquote class="anchor">workspace.ts:437 mergeComment()</blockquote></header>
   <div class="comment">
     <header><strong>Resolve anchor-only disagreements automatically (M6)</strong></header>
     <p>When <code>anchor</code> is the only field both sides changed, place both anchors in the merged text. If they land on the same span, keep either one (or re-pin to the merged blob). Ask the user only if they disagree, and then show both <em>highlighted</em> rather than as two comment bodies. Other fields still merge as usual. This is about 10 lines and fixes the most confusing card.</p>
   </div>
 </article>
-<article class="thread">
+<article class="thread first">
   <header><blockquote class="anchor">ThreadPanel.tsx:73 ConflictCard</blockquote></header>
   <div class="comment">
     <header><strong>Label the sides and show what differs (M4, M8)</strong></header>
@@ -387,20 +279,20 @@ editor.ts:3   `In Settings (⌘,), set "editor" …`</blockquote></header>
 <p class="section-intro">Most messages are already in plain sentences, a big improvement on the last audit. These are the ones that still mislead, expose internals, or don't say what to do next.</p>
 <div class="table-wrap">
 <table>
-<thead><tr><th>Where</th><th>The user sees</th><th>Suggest</th></tr></thead>
+<thead><tr><th>#</th><th>Where</th><th>The user sees</th><th>Suggest</th></tr></thead>
 <tbody>
-<tr><td><code>ThreadPanel.tsx:169</code></td><td>"This text can't be found any more. Select where…", shown for a missing base blob (B5) and for deleted documents (B7)</td><td>Use a separate message for each cause: <em>never pushed</em>, <em>file deleted</em>, or <em>text removed</em>.</td></tr>
-<tr><td><code>ThreadPanel.tsx:79</code></td><td>"Two branches changed this comment differently. Keep one version:", shown over identical versions (M6)</td><td>Resolve those automatically, and label the sides in the rest.</td></tr>
-<tr><td><code>ThreadPanel.tsx:58</code></td><td>"…was deleted on another branch."</td><td>It's also shown after your own "Keep it deleted", or after a deletion outside Discourse. Say "was deleted" instead.</td></tr>
-<tr><td><code>ThreadPanel.tsx:234</code></td><td>Native <code>confirm()</code>: "Delete this thread and its 2 replies?" with OK/Cancel and no title</td><td>Undo already exists. Delete straight away and show "Deleted · Undo (⌘Z)".</td></tr>
-<tr><td><code>editor.ts:3,21</code></td><td><code>Couldn't open the editor: there's no program "code". In Settings (⌘,), set "editor" to a command such as ["code", "--goto", "{file}:{line}:{column}"].</code></td><td>Keep it to one sentence plus a Settings button. When no editor is set, fall back to <code>shell.openPath</code>, as <code>editSettings</code> already does.</td></tr>
-<tr><td><code>settings.ts:24</code></td><td><code>Settings (/Users/…/Application Support/Discourse/settings.json) aren't valid JSON: Unexpected token } in JSON at position 42</code></td><td>"settings.json has a mistake on line N", plus an Edit button.</td></tr>
-<tr><td><code>workspace.ts:386</code></td><td><code>x.json isn't a valid comment: Unexpected token … at position 12.</code></td><td>Drop the parser text and offer "Open file". Show the path relative to <code>.comments/</code> so it's readable.</td></tr>
-<tr><td><code>workspace.ts:385</code></td><td>"…has merge conflict markers. Fix them in your editor."</td><td>Only reached when a side isn't valid JSON. Add an "Open in editor" button rather than leaving it as text.</td></tr>
-<tr><td><code>workspace.ts:191</code></td><td>"The comment this replies to isn't in the history, so it can't be restored."</td><td>Add the next step: "Delete this reply, or ask its author."</td></tr>
-<tr><td><code>workspace.ts:167</code></td><td>"Can't undo: these comments have changed outside Discourse since."</td><td>Good. It also quietly clears the whole history, so add "Undo history was cleared."</td></tr>
-<tr><td><code>workspace.ts:227</code></td><td><code>Can't read a.md: EACCES: permission denied, open '/abs/path/a.md'</code></td><td>Map the common error codes (EACCES, EISDIR, ENOENT) to sentences and don't show the absolute path.</td></tr>
-<tr><td>Any action that fails because state is stale</td><td>The message, and the stale UI stays (B8)</td><td>Reload after the error, and say "Reloaded".</td></tr>
+<tr id="E1"><td>E1</td><td><code>ThreadPanel.tsx:169</code></td><td>"This text can't be found any more. Select where…", shown for a missing base blob (B5) and for deleted documents (B7)</td><td>Use a separate message for each cause: <em>never pushed</em>, <em>file deleted</em>, or <em>text removed</em>.</td></tr>
+<tr id="E2"><td>E2</td><td><code>ThreadPanel.tsx:79</code></td><td>"Two branches changed this comment differently. Keep one version:", shown over identical versions (M6)</td><td>Resolve those automatically, and label the sides in the rest.</td></tr>
+<tr id="E3"><td>E3</td><td><code>ThreadPanel.tsx:58</code></td><td>"…was deleted on another branch."</td><td>It's also shown after your own "Keep it deleted", or after a deletion outside Discourse. Say "was deleted" instead.</td></tr>
+<tr id="E4"><td>E4</td><td><code>ThreadPanel.tsx:234</code></td><td>Native <code>confirm()</code>: "Delete this thread and its 2 replies?" with OK/Cancel and no title</td><td>Undo already exists. Delete straight away and show "Deleted · Undo (⌘Z)".</td></tr>
+<tr id="E5"><td>E5</td><td><code>editor.ts:3,21</code></td><td><code>Couldn't open the editor: there's no program "code". In Settings (⌘,), set "editor" to a command such as ["code", "--goto", "{file}:{line}:{column}"].</code></td><td>Keep it to one sentence plus a Settings button. When no editor is set, fall back to <code>shell.openPath</code>, as <code>editSettings</code> already does.</td></tr>
+<tr id="E6"><td>E6</td><td><code>settings.ts:24</code></td><td><code>Settings (/Users/…/Application Support/Discourse/settings.json) aren't valid JSON: Unexpected token } in JSON at position 42</code></td><td>"settings.json has a mistake on line N", plus an Edit button.</td></tr>
+<tr id="E7"><td>E7</td><td><code>workspace.ts:386</code></td><td><code>x.json isn't a valid comment: Unexpected token … at position 12.</code></td><td>Drop the parser text and offer "Open file". Show the path relative to <code>.comments/</code> so it's readable.</td></tr>
+<tr id="E8"><td>E8</td><td><code>workspace.ts:385</code></td><td>"…has merge conflict markers. Fix them in your editor."</td><td>Only reached when a side isn't valid JSON. Add an "Open in editor" button rather than leaving it as text.</td></tr>
+<tr id="E9"><td>E9</td><td><code>workspace.ts:191</code></td><td>"The comment this replies to isn't in the history, so it can't be restored."</td><td>Add the next step: "Delete this reply, or ask its author."</td></tr>
+<tr id="E10"><td>E10</td><td><code>workspace.ts:167</code></td><td>"Can't undo: these comments have changed outside Discourse since."</td><td>Good. It also quietly clears the whole history, so add "Undo history was cleared."</td></tr>
+<tr id="E11"><td>E11</td><td><code>workspace.ts:227</code></td><td><code>Can't read a.md: EACCES: permission denied, open '/abs/path/a.md'</code></td><td>Map the common error codes (EACCES, EISDIR, ENOENT) to sentences and don't show the absolute path.</td></tr>
+<tr id="E12"><td>E12</td><td>Any action that fails because state is stale</td><td>The message, and the stale UI stays (B8)</td><td>Reload after the error, and say "Reloaded".</td></tr>
 </tbody>
 </table>
 </div>
@@ -581,17 +473,6 @@ deps: @milkdown/crepe, @milkdown/kit (+ Vue, ProseMirror, a second CodeMirror se
 </section>
 
 <!-- ───────────────────────── METHOD ───────────────────────── -->
-<section id="method">
-<h2>Method</h2>
-<ul class="plain">
-  <li>Read all of <code>src/</code>: about 2.4k lines of TS/TSX, 1.4k of CSS, plus the Electron and preload code.</li>
-  <li><code>npm test</code>: 26/26 pass. <code>tsc</code>: clean.</li>
-  <li>Scripted 14 scenarios against <code>Workspace</code> with real <code>git merge</code>/<code>rebase</code> and a colocated <code>jj new A B</code> merge (jj 0.44). Scripts are in the session scratchpad and nothing in the repo was changed.</li>
-  <li>Benchmarked <code>diffEdits</code> on a 40k-word synthetic document, and mapped single-word typo fixes.</li>
-  <li>Ran <code>files()</code> and <code>view()</code> on a <em>copy</em> of <code>~/Documents/thelang</code>: 12 files, 7 with comments, 17 threads, all placed, none drifted, no problems. <code>files()</code> took 24&nbsp;ms and each view 6–64&nbsp;ms.</li>
-  <li>Not done: running the Electron UI. Visual findings (B14–B16) come from reading the CSS and JSX.</li>
-</ul>
-</section>
 </div>
 </main>
 </div>
